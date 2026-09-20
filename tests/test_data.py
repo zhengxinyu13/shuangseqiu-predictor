@@ -291,6 +291,33 @@ def test_draw_dates_are_unique_per_issue(data_rows):
     assert not duplicates, f"同一天出现多个期号：{duplicates[:5]}"
 
 
+def test_tuesday_draws_started_on_2004_08_24(data_rows):
+    """周二开奖自 2004067 期（2004-08-24）起加入。
+
+    报告第二节据此解释「早年记录数为什么偏少」，这个日期是写进报告的
+    历史事实，所以在这里钉住：数据一旦变动，这条测试先响，
+    避免报告里的日期悄悄过期。
+    """
+    tuesday = sorted(
+        (row for row in data_rows if _cell(row, "星期") == "周二"),
+        key=lambda row: _cell(row, "开奖日期"),
+    )
+    assert tuesday, "数据中没有任何周二开奖记录"
+
+    first = tuesday[0]
+    assert int(_cell(first, "期号")) == 2004067, f"最早的周二开奖变成了 {_cell(first, '期号')}"
+    assert _cell(first, "开奖日期").date().isoformat() == "2004-08-24"
+
+
+def test_2003_only_drew_on_thursday_and_sunday(data_rows):
+    """2003 年只在周四、周日开奖，全年 89 期——报告据此说明早年为何偏少。"""
+    weekdays = Counter(
+        str(_cell(row, "星期")) for row in data_rows if int(_cell(row, "年份")) == 2003
+    )
+    assert set(weekdays) == {"周四", "周日"}, f"2003 年出现意外开奖日：{dict(weekdays)}"
+    assert sum(weekdays.values()) == 89
+
+
 # ------------------------------------------------- 与统计附表交叉核对（防口径漂移）
 
 def test_red_stats_sheet_agrees_with_package(draws, sheet_rows):

@@ -87,15 +87,17 @@ def plot_yearly_counts(profiles: Sequence[YearProfile], out_path: Path) -> Path:
 
     fig, ax = plt.subplots(figsize=(10, 4.2), dpi=150)
     bars = ax.bar(years, counts, color=colors, width=0.62)
+    # 数字写在柱子内部：多数年份的记录数都紧贴 160 上限虚线，
+    # 标在柱顶必然与虚线交叠。柱内顶对齐可以彻底避开。
     for bar, count in zip(bars, counts):
         ax.text(
             bar.get_x() + bar.get_width() / 2,
-            bar.get_height() + max(counts) * 0.02,
+            bar.get_height() - max(counts) * 0.02,
             str(count),
             ha="center",
-            va="bottom",
+            va="top",
             fontsize=9,
-            color=NEUTRAL,
+            color="white",
         )
 
     ax.axhline(
@@ -104,19 +106,13 @@ def plot_yearly_counts(profiles: Sequence[YearProfile], out_path: Path) -> Path:
         linestyle="--",
         linewidth=1.2,
     )
-    ax.text(
-        0.70,
-        0.52,
-        f"虚线 = 一年物理上限 {MAX_PLAUSIBLE_DRAWS_PER_YEAR} 期",
-        transform=ax.transAxes,
-        ha="left",
-        va="center",
-        fontsize=9.5,
-        color=ALERT,
-    )
-    # 判定文字随数据走：有越限年份才提"红色"，否则明确说明全部通过
-    verdict = "红色 = 超过物理上限，不可信" if has_suspect else "全部年份均未超过上限"
-    _style(ax, f"各年份记录数（{verdict}）", "年份", "记录数")
+    # 图内不放说明文字：年份数量随数据变化，而多数年份的柱子都贴近上限，
+    # 任何固定位置都会压到柱子。改为让标题承载「上限是多少」这个信息。
+    if has_suspect:
+        title = f"各年份记录数（红线 = 一年 {MAX_PLAUSIBLE_DRAWS_PER_YEAR} 期上限，红柱为超限年份）"
+    else:
+        title = f"各年份记录数（红线 = 一年 {MAX_PLAUSIBLE_DRAWS_PER_YEAR} 期上限，全部年份均未超过）"
+    _style(ax, title, "年份", "记录数")
     return _save(fig, out_path)
 
 

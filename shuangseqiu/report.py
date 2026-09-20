@@ -323,6 +323,71 @@ window.addEventListener('resize', function () {
 """
 
 
+def _p_value_verdict(p_value: float) -> str:
+    """按实际 p 值生成结论措辞。
+
+    数字永远来自计算结果，不写死在文案里 —— 否则数据一更新，
+    报告里的字面数字就会和表格里的计算值对不上。
+    """
+    if p_value < 0.05:
+        return (
+            f"p = {p_value:.3f} 低于 0.05，按常规显著性水平要拒绝「均匀出现」的原假设，"
+            "需要回头核查数据或摇奖机制"
+        )
+    if p_value < 0.10:
+        return (
+            f"p = {p_value:.3f} 已贴近常用的 0.05，属于需要留意的边缘情形；"
+            "严格说只能讲「现有样本量下还没看出与均匀随机的差别」，"
+            "而不是「分布与随机毫无差别」"
+        )
+    return f"p = {p_value:.3f} 明显高于 0.05，看不出与均匀随机的差别"
+
+
+def _low_period_note(quality: QualityReport, ratio: float = 0.9) -> str:
+    """热力图里"哪几行颜色天然偏浅"的说明。
+
+    期数少的年份每个号码出现次数天然就少，整行颜色会偏浅，
+    不提醒就会被误读成"这几年这些号码偏冷"。
+
+    基准用**年度中位数**而不是固定取前三名：年份数量会随数据增长而变化，
+    固定名次会把新出现的偏少年份挤掉（例如疫情年）。
+    """
+    counts = sorted(profile.count for profile in quality.profiles)
+    if not counts:
+        return "各年期数差异不足以影响颜色深浅。"
+    middle = len(counts) // 2
+    median = counts[middle] if len(counts) % 2 else (counts[middle - 1] + counts[middle]) / 2
+    sparse = sorted(
+        (profile for profile in quality.profiles if profile.count < median * ratio),
+        key=lambda profile: profile.year,
+    )
+    if not sparse:
+        return "各年期数接近，每行颜色深浅可以直接横向比较。"
+    listed = "、".join(f"{profile.year} 年（{profile.count} 期）" for profile in sparse)
+    return f"期数偏少的年份有 {listed}，那几行颜色天然偏浅，只有横向比较才有意义。"
+
+
+def _serial_gap_sentence(quality: QualityReport) -> str:
+    """年内序号连续性的实际结论。
+
+    只有真的零缺号时才敢写"零缺号"——缺号有没有、有几个，
+    必须由数据算出来，否则数据一变这句话就成了假话。
+    """
+    gapped = [profile for profile in quality.profiles if profile.missing_indexes]
+    if not gapped:
+        return f"{len(quality.profiles)} 个年份全部自 001 起连续编号，零缺号"
+    listed = "、".join(
+        f"{profile.year} 年缺 {len(profile.missing_indexes)} 期" for profile in gapped
+    )
+    return f"{len(quality.profiles)} 个年份里有 {len(gapped)} 个存在年内缺号：{listed}"
+
+
+def _period_range(quality: QualityReport) -> str:
+    """各年记录数的区间，形如 ``89–154``。"""
+    counts = [profile.count for profile in quality.profiles]
+    return f"{min(counts)}–{max(counts)}" if counts else "—"
+
+
 def _cards(summary: dict, quality: QualityReport) -> str:
     meta = summary["meta"]
     chi = summary["chi_square"]
@@ -462,13 +527,13 @@ def render_html(quality: QualityReport, summary: dict, generated_at: str) -> str
   <h3>三条主要结论</h3>
   <p><strong>1. 这份数据可以用。</strong>
   {quality.total_records} 期记录全部通过结构校验：没有任何一年的期数越过物理上限
-  （一年最多 {MAX_PLAUSIBLE_DRAWS_PER_YEAR} 期），每年都自 001 起编号且年内无缺口，
-  {meta["periods"]} 期完整覆盖 {meta["years"][0]}–{meta["years"][-1]} 年，中间没有断档。</p>
-  <p><strong>2. 号码分布没有偏离"完全随机"到可检出的程度。</strong>
-  红球卡方检验 p 值 {chi["red"]["p_value"]:.3f}、蓝球 {chi["blue"]["p_value"]:.3f}，
-  均大于 0.05，无法拒绝均匀分布假设——其中红球这个值已贴近常用显著性水平 0.05，
-  属于需要留意的边缘情形，但尚未达到判定"不随机"的程度。所谓"热号""冷号"的差距，
-  仍落在随机波动范围内。</p>
+  （一年最多 {MAX_PLAUSIBLE_DRAWS_PER_YEAR} 期），{meta["periods"]} 期完整覆盖
+  {meta["years"][0]}–{meta["years"][-1]} 年，中间没有断档。
+  年内序号、开奖日、派生列、口径四项的逐项核查见第二节。</p>
+  <p><strong>2. 号码分布的随机性检验。</strong>
+  红球方面，{_p_value_verdict(chi["red"]["p_value"])}；
+  蓝球方面，{_p_value_verdict(chi["blue"]["p_value"])}。
+  所谓"热号""冷号"的差距，即便存在也不构成可用的选号信号——理由见第七节。</p>
   <p><strong>3. 形态分布同样贴合理论。</strong>
   和值实际均值 {sums["mean"]}，与理论均值 {sums["theoretical_mean"]:.0f} 相差
   {abs(sums["mean"] - sums["theoretical_mean"]):.2f}；奇偶比、大小比、三区比都呈典型的钟形分布。
@@ -492,14 +557,14 @@ def render_html(quality: QualityReport, summary: dict, generated_at: str) -> str
   <strong>53 × 3 = 159 期</strong>；放宽 1 期取 <strong>{MAX_PLAUSIBLE_DRAWS_PER_YEAR}</strong> 作为阈值，
   超过即判定该年份不可信。</p>
   <div id="chart-yearly" class="chart"></div>
-  <p class="caption">图 1：各年份记录数。{len(quality.profiles)} 个年份全部落在
-  {min(profile.count for profile in quality.profiles)}–{max(profile.count for profile in quality.profiles)}
-  期之间，无一越过上限。</p>
+  <p class="caption">图 1：各年份记录数。{len(quality.profiles)} 个年份的记录数落在
+  {_period_range(quality)} 期之间，无一越过上限。</p>
   {_year_table(quality)}
-  <p>除期数上限外，以下四条也全部通过——每一条都能由数据自身复核：</p>
-  <p><strong>年内序号：</strong>{len(quality.profiles)} 个年份<strong>全部</strong>自 001 起连续编号，
-  零缺号。2003 年 89 期、2004 年 122 期偏少是开奖节奏变化所致：2003 年每周开 2 期，
-  2004 年 10 月起加开周二，2005 年起固定每周三期。</p>
+  <p>除期数上限外，以下四条也一并核查——每一条都能由数据自身复核：</p>
+  <p><strong>年内序号：</strong>{_serial_gap_sentence(quality)}。各年期数落在
+  {_period_range(quality)} 期之间，早期年份偏少是开奖频率演变的结果：2003 年只在周四、
+  周日开奖，2004 年 8 月 24 日（<strong>2004067 期</strong>）起加开周二，此后固定为每周三期
+  ——这一条可直接查数据「开奖日期」「星期」两列。</p>
   <p><strong>开奖日：</strong>{meta["periods"]} 期全部落在周二 / 周四 / 周日，
   且「星期」列与开奖日期的真实日历<strong>逐期吻合</strong>。</p>
   <p><strong>派生列自洽：</strong>和值、跨度、奇偶比、大小比、三区比、连号六列，
@@ -560,17 +625,15 @@ def render_html(quality: QualityReport, summary: dict, generated_at: str) -> str
   蓝球 {chi["blue"]["statistic"]:.2f}（自由度 {chi["blue"]["dof"]}）。</p>
   <p>对应 p 值：红球 <strong>{chi["red"]["p_value"]:.3f}</strong>、
   蓝球 <strong>{chi["blue"]["p_value"]:.3f}</strong>。
-  两者都大于 0.05，<strong>没有证据拒绝"号码均匀出现"的原假设</strong>。
-  需要如实指出：红球 0.063 已贴近 0.05，只是尚未越过判定门槛，
-  不能据此说"分布和随机毫无差别"，只能说"现有样本量下还没看出差别"。</p>
+  红球方面，{_p_value_verdict(chi["red"]["p_value"])}；
+  蓝球方面，{_p_value_verdict(chi["blue"]["p_value"])}。</p>
   <div class="note">p 值的含义不是"号码是随机的概率"，而是"如果号码真的均匀随机，
-  出现当前这么偏的分布的概率有多大"。红球 0.063 意味着：即使摇奖完全公平，
-  也有约 6% 的机会出现当前这种程度的偏斜——罕见但远没到不可能。</div>
+  出现当前这么偏的分布的概率有多大"。红球 p = {chi["red"]["p_value"]:.3f} 意味着：
+  即使摇奖完全公平，也有约 {chi["red"]["p_value"] * 100:.1f}% 的机会出现当前这种程度的偏斜。</div>
   <h3>号码 × 年份热力图</h3>
   <div id="chart-heatmap" class="chart tall"></div>
   <p class="caption">图 10：各年份红球出现次数。颜色深浅没有形成纵向条纹，
-  说明不存在"某几年偏爱某些号码"的稳定模式。注意 2020 年因疫情只开出 134 期、
-  2026 年仍在进行中（108 期），这两行颜色天然偏浅，只有横向比较才有意义。</p>
+  说明不存在"某几年偏爱某些号码"的稳定模式。{_low_period_note(quality)}</p>
 </section>
 
 <section>
@@ -579,7 +642,7 @@ def render_html(quality: QualityReport, summary: dict, generated_at: str) -> str
   可以当作 {meta["years"][0]} 年至今的完整开奖历史使用——{meta["periods"]} 期全部进入分析，
   没有需要剔除的部分。</p>
   <p><strong>对分析结论：</strong>号码频率、和值、奇偶比、大小比、三区比、连号、
-  重号等指标全部贴合随机假设，没有可复现的规律。</p>
+  重号等指标都没有呈现出可复现的规律；频率层面的检验结果见第六节。</p>
   <p><strong>能力边界：</strong>任何声称能根据历史号码预测下一期的方法，都要先解释
   为什么它能在 p = {chi["red"]["p_value"]:.3f} 这种级别的均匀性上找到信号。
   本项目后续若要做建模，目标应当放在"验证随机性"而不是"预测号码"。</p>
@@ -667,11 +730,12 @@ def render_markdown(
 ## 一、先看结论
 
 1. **这份数据可以用。** {quality.total_records} 期记录全部通过结构校验：没有任何一年的期数
-   越过物理上限（一年最多 {MAX_PLAUSIBLE_DRAWS_PER_YEAR} 期），每年都自 001 起编号且年内无缺口，
-   {meta["periods"]} 期完整覆盖 {meta["years"][0]}–{meta["years"][-1]} 年，中间没有断档。
-2. **号码分布没有偏离"完全随机"到可检出的程度。** 红球卡方检验 p 值
-   {chi["red"]["p_value"]:.3f}、蓝球 {chi["blue"]["p_value"]:.3f}，均大于 0.05——其中红球
-   已贴近常用显著性水平 0.05，属于需要留意的边缘情形，但尚未达到判定"不随机"的程度。
+   越过物理上限（一年最多 {MAX_PLAUSIBLE_DRAWS_PER_YEAR} 期），{meta["periods"]} 期完整覆盖
+   {meta["years"][0]}–{meta["years"][-1]} 年，中间没有断档。年内序号、开奖日、派生列、
+   口径四项的逐项核查见第二节。
+2. **号码分布的随机性检验。** 红球方面，{_p_value_verdict(chi["red"]["p_value"])}；
+   蓝球方面，{_p_value_verdict(chi["blue"]["p_value"])}。"热号""冷号"的差距即便存在，
+   也不构成可用的选号信号。
 3. **形态分布同样贴合理论。** 和值实际均值 {sums["mean"]}，理论均值
    {sums["theoretical_mean"]:.0f}，相差 {abs(sums["mean"] - sums["theoretical_mean"]):.2f}。
 
@@ -695,11 +759,11 @@ def render_markdown(
 
 {_markdown_table(["年份", "记录数", "最小编号", "最大编号", "年内缺口", "判定"], year_rows)}
 
-除期数上限外，以下四条也全部通过：
+除期数上限外，以下四条也一并核查：
 
-- **年内序号**：{len(quality.profiles)} 个年份全部自 001 起连续编号，零缺号。2003 年 89 期、
-  2004 年 122 期偏少是开奖节奏变化所致（2003 年每周 2 期，2004 年 10 月起加开周二，
-  2005 年起固定每周三期）。
+- **年内序号**：{_serial_gap_sentence(quality)}。各年期数落在 {_period_range(quality)} 期之间，
+  早期年份偏少是开奖频率演变的结果——2003 年只在周四、周日开奖，2004 年 8 月 24 日
+  （2004067 期）起加开周二，此后固定为每周三期（可查数据「开奖日期」「星期」两列）。
 - **开奖日**：{meta["periods"]} 期全部落在周二 / 周四 / 周日，且「星期」列与开奖日期的
   真实日历逐期吻合。
 - **派生列自洽**：和值、跨度、奇偶比、大小比、三区比、连号六列，全部能由 6 个红球重算得到一致结果。
@@ -752,19 +816,17 @@ def render_markdown(
 | 红球 | {chi["red"]["statistic"]:.2f} | {chi["red"]["dof"]} | **{chi["red"]["p_value"]:.3f}** |
 | 蓝球 | {chi["blue"]["statistic"]:.2f} | {chi["blue"]["dof"]} | **{chi["blue"]["p_value"]:.3f}** |
 
-两者都大于 0.05，没有证据拒绝"号码均匀出现"的原假设。需要如实指出：红球 0.063
-已贴近 0.05，只是尚未越过判定门槛，不能据此说"分布和随机毫无差别"，
-只能说"现有样本量下还没看出差别"。
+红球方面，{_p_value_verdict(chi["red"]["p_value"])}；
+蓝球方面，{_p_value_verdict(chi["blue"]["p_value"])}。
 
 > p 值不是"号码是随机的概率"，而是"如果号码真的均匀随机，出现当前这么偏的
-> 分布的概率有多大"。红球 0.063 意味着：即使摇奖完全公平，也有约 6% 的机会
-> 出现当前这种程度的偏斜——罕见，但远没到不可能。
+> 分布的概率有多大"。红球 p = {chi["red"]["p_value"]:.3f} 意味着：即使摇奖完全公平，
+> 也有约 {chi["red"]["p_value"] * 100:.1f}% 的机会出现当前这种程度的偏斜。
 
 ![热力图]({figures["heatmap"]})
 
 颜色深浅没有形成纵向条纹，说明不存在"某几年偏爱某些号码"的稳定模式。
-注意 2020 年因疫情只开出 134 期、2026 年仍在进行中（108 期），
-这两行颜色天然偏浅，只有横向比较才有意义。
+{_low_period_note(quality)}
 
 ## 七、结论与边界
 
@@ -772,7 +834,7 @@ def render_markdown(
   {meta["years"][0]} 年至今的完整开奖历史使用——{meta["periods"]} 期全部进入分析，
   没有需要剔除的部分。
 - **对分析结论**：号码频率、和值、奇偶比、大小比、三区比、连号、
-  重号等指标全部贴合随机假设，没有可复现的规律。
+  重号等指标都没有呈现出可复现的规律；频率层面的检验结果见第六节。
 - **能力边界**：任何声称能根据历史号码预测下一期的方法，都要先解释为什么它能在
   p = {chi["red"]["p_value"]:.3f} 这种级别的均匀性上找到信号。后续建模目标应放在
   "验证随机性"而不是"预测号码"。
