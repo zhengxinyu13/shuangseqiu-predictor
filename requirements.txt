@@ -3,6 +3,16 @@ openpyxl>=3.1,<4
 numpy>=2.5,<3
 scipy>=1.18,<2
 matplotlib>=3.11,<4
+# 「检查更新」访问 55128.cn 与官方 cwl.gov.cn 用（shuangseqiu.updater）
+httpx>=0.27,<1
 
 # 测试依赖
 pytest>=9,<10
+
+# 界面依赖：tkinter 是标准库，但**不是每个 Python 发行版都带**。
+# 本机的托管解释器（.workbuddy/binaries/python）不带 tkinter，因此界面单独用
+# 系统 Python 3.14 建了一个 venv：
+#     C:\Python314\python.exe -m venv %USERPROFILE%\.workbuddy\binaries\python\envs\ssq-picker
+#     该 venv 内：pip install "openpyxl>=3.1,<4" "httpx>=0.27,<1"
+# 启动：双击 run_picker.bat，或
+#     %USERPROFILE%\.workbuddy\binaries\python\envs\ssq-picker\Scripts\python.exe picker.py

@@ -13,6 +13,9 @@
 *.html text eol=lf
 *.txt  text eol=lf
 
+# Windows 批处理脚本用 CRLF，避免 cmd.exe 解析跨行结构出问题
+*.bat  text eol=crlf
+
 # 二进制资源，禁止做文本 diff / 换行转换
 *.xlsx binary
 *.xls  binary
