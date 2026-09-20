@@ -69,38 +69,76 @@ def test_missing_years_detected(make_draw):
 
 # ------------------------------------------------------------ 真实数据断言
 
+EXPECTED_PERIODS = 3505
+EXPECTED_YEARS = tuple(range(2003, 2027))
+
+# 各年份期数的实测基线（2003–2004 年每周 2 期，2005 年起每周 3 期，2020 年因疫情减期）。
+# 数据被替换、漏采或截断时，这条断言会立刻报警。
+EXPECTED_YEAR_COUNTS = {
+    2003: 89,
+    2004: 122,
+    2005: 153,
+    2006: 154,
+    2007: 153,
+    2008: 154,
+    2009: 154,
+    2010: 153,
+    2011: 153,
+    2012: 154,
+    2013: 154,
+    2014: 152,
+    2015: 154,
+    2016: 153,
+    2017: 154,
+    2018: 153,
+    2019: 151,
+    2020: 134,
+    2021: 150,
+    2022: 150,
+    2023: 151,
+    2024: 151,
+    2025: 151,
+    2026: 108,
+}
+
 
 def test_real_data_record_count(draws):
-    assert len(draws) == 4330
-    assert build_quality_report(draws).total_records == 4330
+    assert len(draws) == EXPECTED_PERIODS
+    assert build_quality_report(draws).total_records == EXPECTED_PERIODS
 
 
-def test_real_data_suspect_years(draws):
+def test_real_data_has_no_suspect_years(draws):
+    """全量数据集每年期数都落在物理上限内，不存在需要剔除的年份。"""
     report = build_quality_report(draws)
 
-    assert report.suspect_years == (2003, 2004, 2005, 2006)
-    assert report.suspect_count == 3744
-    assert report.trusted_years == (2022, 2023, 2024, 2025, 2026)
-    assert report.trusted_count == 586
+    assert report.suspect_years == ()
+    assert report.suspect_count == 0
+    assert report.trusted_years == EXPECTED_YEARS
+    assert report.trusted_count == EXPECTED_PERIODS
 
 
-def test_real_data_suspect_year_period_counts(draws):
+def test_real_data_has_no_missing_years(draws):
+    assert build_quality_report(draws).missing_years == ()
+
+
+def test_real_data_every_year_is_complete(draws):
+    """每年都自 001 起编号、年内序号连续，一个缺口都没有。"""
+    for profile in build_quality_report(draws).profiles:
+        assert profile.starts_at_one, f"{profile.year} 年未从 001 起编号"
+        assert profile.missing_indexes == (), f"{profile.year} 年缺号：{profile.missing_indexes}"
+        assert profile.is_complete, f"{profile.year} 年不完整"
+
+
+def test_real_data_year_period_counts_match_baseline(draws):
+    """各年份期数锁定为实测基线。"""
+    actual = {profile.year: profile.count for profile in build_quality_report(draws).profiles}
+
+    assert actual == EXPECTED_YEAR_COUNTS
+
+
+def test_real_data_no_year_exceeds_physical_limit(draws):
     report = build_quality_report(draws)
+    peak = max(profile.count for profile in report.profiles)
 
-    assert report.year_count(2003) == 999
-    assert report.year_count(2004) == 1000
-    assert report.year_count(2005) == 1000
-    assert report.year_count(2006) == 745
-
-
-def test_real_data_missing_years_are_2007_to_2021(draws):
-    assert build_quality_report(draws).missing_years == tuple(range(2007, 2022))
-
-
-def test_real_data_2026_gap_is_indexes_40_to_47(draws):
-    report = build_quality_report(draws)
-    profile = next(item for item in report.profiles if item.year == 2026)
-
-    assert profile.missing_indexes == tuple(range(40, 48))
-    assert profile.count == 100
-    assert profile.starts_at_one is True
+    assert peak <= MAX_PLAUSIBLE_DRAWS_PER_YEAR
+    assert peak == 154  # 实测峰值

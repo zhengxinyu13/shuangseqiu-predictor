@@ -83,6 +83,7 @@ def plot_yearly_counts(profiles: Sequence[YearProfile], out_path: Path) -> Path:
     years = [str(profile.year) for profile in profiles]
     counts = [profile.count for profile in profiles]
     colors = [ALERT if not profile.is_count_plausible else BLUE_BALL for profile in profiles]
+    has_suspect = any(not profile.is_count_plausible for profile in profiles)
 
     fig, ax = plt.subplots(figsize=(10, 4.2), dpi=150)
     bars = ax.bar(years, counts, color=colors, width=0.62)
@@ -113,7 +114,9 @@ def plot_yearly_counts(profiles: Sequence[YearProfile], out_path: Path) -> Path:
         fontsize=9.5,
         color=ALERT,
     )
-    _style(ax, "各年份记录数（红色 = 超过物理上限，不可信）", "年份", "记录数")
+    # 判定文字随数据走：有越限年份才提"红色"，否则明确说明全部通过
+    verdict = "红色 = 超过物理上限，不可信" if has_suspect else "全部年份均未超过上限"
+    _style(ax, f"各年份记录数（{verdict}）", "年份", "记录数")
     return _save(fig, out_path)
 
 

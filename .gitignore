@@ -42,5 +42,8 @@ desktop.ini
 # ---- 日志 ----
 *.log
 
+# ---- 数据采集原始缓存（可由 scripts/fetch_sources.py 重新拉取，不入库）----
+data/_raw/
+
 # ---- 本地工具数据（WorkBuddy 工作区记忆/缓存）----
 .workbuddy/

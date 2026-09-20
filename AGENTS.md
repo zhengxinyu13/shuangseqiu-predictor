@@ -6,6 +6,9 @@
 ## 测试
 
 - 测试框架：pytest，用例放在 `tests/` 目录。
-- 运行全部测试：`.venv\Scripts\python.exe -m pytest`
+- 依赖清单见 `requirements.txt`（openpyxl 读 Excel，scipy 做卡方检验，matplotlib 出图）。
+- 解释器刻意装在项目**外**，避免归档目录被虚拟环境（约 300 MB）撑大：
+
+      %USERPROFILE%\.workbuddy\binaries\python\envs\default\Scripts\python.exe -m pytest
+
 - 交付前必须让全部测试通过，测试输出里不得出现 failed 或 error。
-- 依赖清单见 `requirements.txt`（openpyxl 用于读 Excel，pytest 用于测试）。

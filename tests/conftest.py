@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import openpyxl
 import pytest
 
 from shuangseqiu.data import Draw, find_data_file, load_draws, load_rows, parse_draw
@@ -21,8 +22,22 @@ def data_path() -> Path:
 
 @pytest.fixture(scope="session")
 def workbook_rows(data_path: Path) -> list[tuple]:
-    """工作簿的全部原始行（含表头）。"""
+    """``开奖记录`` 工作表的全部原始行（含表头）。"""
     return load_rows(data_path)
+
+
+@pytest.fixture(scope="session")
+def sheet_rows(data_path: Path):
+    """按名称读取工作簿任意工作表，返回 ``(name) -> 行元组列表`` 的读取器。"""
+
+    def _load(name: str) -> list[tuple]:
+        workbook = openpyxl.load_workbook(data_path, read_only=True, data_only=True)
+        try:
+            return [tuple(row) for row in workbook[name].iter_rows(values_only=True)]
+        finally:
+            workbook.close()
+
+    return _load
 
 
 @pytest.fixture(scope="session")

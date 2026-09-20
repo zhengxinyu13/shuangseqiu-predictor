@@ -5,9 +5,11 @@ from shuangseqiu.data import (
     find_data_file,
     load_draws,
     load_rows,
+    normalize_issue,
     parse_balls,
     parse_draw,
     parse_issue,
+    parse_row,
 )
 
 __all__ = [
@@ -15,7 +17,9 @@ __all__ = [
     "find_data_file",
     "load_draws",
     "load_rows",
+    "normalize_issue",
     "parse_balls",
     "parse_draw",
     "parse_issue",
+    "parse_row",
 ]

@@ -30,8 +30,9 @@ BLUE_NUMBERS: tuple[int, ...] = tuple(range(BLUE_BALL_MIN, BLUE_BALL_MAX + 1))
 # 三区划分：一区 1-11、二区 12-22、三区 23-33
 ZONE_BOUNDS: tuple[tuple[int, int], ...] = ((1, 11), (12, 22), (23, 33))
 
-# 大小划分：红球 1-16 记作小号，17-33 记作大号
-BIG_THRESHOLD = 16
+# 大小划分：红球 01-16 记作小号，17-33 记作大号（双色球标准口径）
+# 与 data/scripts/build_dataset.py 的「大小比」列保持同一口径
+BIG_NUMBER_MIN = 17
 
 # 红球和值的理论取值区间：最小 1+2+3+4+5+6=21，最大 28+29+30+31+32+33=183
 SUM_MIN = 21
@@ -145,8 +146,8 @@ def odd_counts(draws: Sequence[Draw]) -> list[int]:
 
 
 def big_counts(draws: Sequence[Draw]) -> list[int]:
-    """每期红球中的大号个数（大于 16）。"""
-    return [sum(1 for number in draw.reds if number > BIG_THRESHOLD) for draw in draws]
+    """每期红球中的大号个数（不小于 17 记为大号，即 01-16 为小号）。"""
+    return [sum(1 for number in draw.reds if number >= BIG_NUMBER_MIN) for draw in draws]
 
 
 def zone_counts(draw: Draw) -> tuple[int, int, int]:
@@ -335,7 +336,10 @@ def build_summary(draws: Sequence[Draw]) -> dict:
             range(0, 4),
             lambda k: "无连号" if k == 0 else f"{k} 组连号",
         ),
-        "repeats": _categorical_distribution(repeats, range(0, 4), lambda k: f"{k} 个重号"),
+        # 重号个数取值 0~6，桶必须覆盖满，否则高频重号会被静默丢掉
+        "repeats": _categorical_distribution(
+            repeats, range(0, RED_BALL_COUNT + 1), lambda k: f"{k} 个重号"
+        ),
         "ac_values": {
             "labels": [str(value) for value in sorted(ac)],
             "counts": [ac[value] for value in sorted(ac)],

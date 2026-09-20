@@ -44,6 +44,9 @@ FIGURE_KEYS = {
     "heatmap": "figures/09.png",
 }
 
+# 全量数据集覆盖的年份：2003–2026，无断档
+EXPECTED_YEARS = list(range(2003, 2027))
+
 
 def _context(draws):
     quality = build_quality_report(draws)
@@ -54,14 +57,14 @@ def test_chart_payload_is_json_serializable(draws):
     quality, summary = _context(draws)
     restored = json.loads(json.dumps(_chart_payload(quality, summary), ensure_ascii=False))
 
-    assert restored["yearly"]["years"] == [2003, 2004, 2005, 2006, 2022, 2023, 2024, 2025, 2026]
-    assert restored["yearly"]["suspect"] == [True, True, True, True, False, False, False, False, False]
+    assert restored["yearly"]["years"] == EXPECTED_YEARS
+    assert restored["yearly"]["suspect"] == [False] * len(EXPECTED_YEARS)
     assert restored["yearly"]["limit"] == 160
     assert len(restored["redFreq"]["counts"]) == 33
     assert len(restored["blueFreq"]["counts"]) == 16
     assert len(restored["omission"]["current"]) == 33
     assert len(restored["omission"]["max"]) == 33
-    assert len(restored["heatmap"]["matrix"]) == 5  # 可信段覆盖 5 个年份
+    assert len(restored["heatmap"]["matrix"]) == len(EXPECTED_YEARS)
 
 
 def test_render_html_embeds_parsable_data(draws):
@@ -78,7 +81,7 @@ def test_render_html_embeds_parsable_data(draws):
     assert data["redFreq"]["numbers"][0] == 1
     assert data["redFreq"]["numbers"][-1] == 33
     assert len(data["omission"]["current"]) == 33
-    assert data["heatmap"]["years"] == [2022, 2023, 2024, 2025, 2026]
+    assert data["heatmap"]["years"] == EXPECTED_YEARS
 
 
 def test_render_html_contains_every_chart_container(draws):
@@ -103,10 +106,30 @@ def test_render_markdown_carries_key_findings(draws):
     quality, summary = _context(draws)
     markdown = render_markdown(quality, summary, "2026-01-01 00:00", FIGURE_KEYS)
 
-    assert str(quality.total_records) in markdown  # 4330
-    assert str(quality.trusted_count) in markdown  # 586
-    assert "物理上不可能" in markdown
+    assert str(quality.total_records) in markdown  # 3505
+    assert str(quality.trusted_count) in markdown  # 3505
+    assert "三源交叉校验" in markdown
+    assert "55128.cn" in markdown  # 说明为何弃用该数据源
     assert f"{summary['chi_square']['red']['p_value']:.3f}" in markdown
+
+
+def test_reports_drop_the_stale_unusable_data_verdict(draws):
+    """回归测试：数据换成全量后，报告不能再宣称有大片记录不可用。
+
+    旧版报告把「86.5% 不能用 / 2007–2021 断档」写死在模板里，
+    数据源换成三源校验过的全量后，这些说法必须彻底消失。
+    """
+    quality, summary = _context(draws)
+    assert quality.suspect_count == 0
+
+    html = render_html(quality, summary, "2026-01-01 00:00")
+    markdown = render_markdown(quality, summary, "2026-01-01 00:00", FIGURE_KEYS)
+
+    for text in (html, markdown):
+        assert "86.5%" not in text
+        assert "物理上不可能" not in text
+        assert "2007–2021" not in text
+        assert str(quality.total_records) in text
 
 
 def test_build_reports_writes_all_artifacts(tmp_path, data_path):
