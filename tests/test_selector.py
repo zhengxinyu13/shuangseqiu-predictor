@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import random
+from math import comb
 
 import pytest
 
@@ -207,8 +208,17 @@ def test_notes_quote_the_measured_indices(strategy, records) -> None:
     joined = "\n".join(selection.notes)
     assert f"{report.red_contains_high.index:.3f}" in joined
     assert f"{report.sum_high.index:.3f}" in joined
-    assert f"{len(strategy.history)} 期" in joined
+    assert f"{strategy.history_periods} 期" in joined
+    assert f"{len(strategy.history)} 组" in joined
     assert "不改变中奖概率" in joined, "必须把效果边界写在说明里"
+    # 撞历史那条不能吹：要如实说明历史只占组合空间很小一份
+    assert "组合空间" in joined and "基本不触发" in joined
+
+
+def test_history_periods_and_distinct_groups_are_both_reported(strategy, records) -> None:
+    """说明文案里的「期数」与「组数」都不能少，否则界面数字会自相矛盾。"""
+    assert strategy.history_periods == len(records) == 3505
+    assert len(strategy.history) == 3499
 
 
 def test_select_numbers_convenience_wrapper(records) -> None:
@@ -216,11 +226,39 @@ def test_select_numbers_convenience_wrapper(records) -> None:
     assert len(selection.reds) == 6 and 1 <= selection.blue <= 16
 
 
-def test_historical_red_sets_are_actually_duplicated_in_the_data(records) -> None:
-    """用户要求排除「红球全一致」并非空想：3505 期里确实有 6 对完全撞红的期。"""
+def test_historical_red_set_repeats_are_exactly_what_chance_predicts(records) -> None:
+    """3505 期里有 6 对红球完全重复 —— 这不是异常，正是随机该有的数量。
+
+    生日问题：n 期里出现重复对的期望是 ``n(n-1)/(2N)``，N = C(33,6) = 1 107 568，
+    即 `3505×3504/(2×1_107_568) ≈ 5.54` 对，实测 6 对，完全落在随机涨落内。
+
+    所以「排除历史撞号」这条规则的触发概率极低（历史只占红球组合空间的 0.32%），
+    Grayson 2026-09-20 指出「概率太低、可以忽略不计」是对的，
+    这条断言就是用来防止后人再把它当成什么发现去吹。
+    """
     seen: dict[frozenset, list[int]] = {}
     for record in records:
         seen.setdefault(frozenset(record.reds), []).append(record.issue)
     duplicated = {reds: issues for reds, issues in seen.items() if len(issues) > 1}
+
+    space = comb(33, 6)
+    expected_pairs = len(records) * (len(records) - 1) / (2 * space)
     assert len(duplicated) == 6
     assert len(seen) == 3499
+    assert abs(len(duplicated) - expected_pairs) < 2, (
+        f"实测 {len(duplicated)} 对 vs 随机期望 {expected_pairs:.2f} 对，不该差这么多"
+    )
+
+    # 关键：这 6 对重复全部落在本策略的候选空间之外，
+    # 也就是说「排除历史撞号」连一次都不会真正拦下选号器的输出。
+    from shuangseqiu.selector import SelectionConfig
+
+    config = SelectionConfig()
+    for reds in duplicated:
+        ordered = tuple(sorted(reds))
+        in_subspace = (
+            any(number in config.high_numbers for number in ordered)
+            and sum(ordered) >= config.min_sum
+            and longest_run(ordered) <= config.max_run
+        )
+        assert in_subspace is False, f"{ordered} 竟然落在候选空间内，本测试的结论需要重审"

@@ -9,9 +9,15 @@
    「大众会避开连号」的常见说法）。
 4. **蓝球按拥挤指数加权**，指数越低越优先。16 个蓝球里最冷的是 15 / 14 / 01。
 5. **排除与历史完全相同的红球组合**（历史 3505 期全库比对）。
+   这条**实测几乎没有作用，如实记在这里**：历史只占红球组合空间的
+   `3505 / 1 107 568 ≈ 0.32%`，单次选号撞上的概率不到千分之三；
+   而且 3505 期里那 6 对红球重复**全部落在本策略的候选空间之外**
+   （和值 <120 或没有 32/33），所以它连一次都不会真正拦下输出。
+   保留它只是因为需求里提了这一条；触发时也只是把一注均匀随机换成另一注均匀随机，
+   对中奖概率没有任何影响。
 
 实现用**拒绝采样**：实测上面 1+2+3 三个条件的联合接受率约 26%（加权后），
-平均尝试 3.8 次；历史撞号的概率上界约 0.33%。因此采样极快，
+平均尝试 3.8 次；撞历史的概率不到千分之三。因此采样极快，
 ``max_attempts`` 只是防御性上限，真跑满时会降级返回并置 ``relaxed=True``，
 不会静默假装满足条件。
 
@@ -32,6 +38,7 @@ from .crowding import (
     HIGH_RED_NUMBERS,
     HIGH_SUM,
     LONG_RUN,
+    RED_COMBINATIONS,
     CrowdingReport,
     compute_crowding,
 )
@@ -123,12 +130,16 @@ class SelectionStrategy:
         report: CrowdingReport,
         history: Iterable[Sequence[int]] = (),
         config: SelectionConfig | None = None,
+        history_periods: int | None = None,
     ) -> None:
         self.config = config or SelectionConfig()
         self.report = report
         self.history: frozenset[frozenset[int]] = frozenset(
             frozenset(reds) for reds in history
         )
+        # 历史里会有红球完全相同的期（3499 组覆盖 3505 期），所以「组数」与「期数」
+        # 是两个数：说明文案要同时给出，免得界面上一处写 3505、一处写 3499 自相矛盾。
+        self.history_periods = len(self.history) if history_periods is None else history_periods
         _validate(self.config, self.report)
 
     @classmethod
@@ -142,6 +153,7 @@ class SelectionStrategy:
             report=compute_crowding(records, high_numbers=(config or SelectionConfig()).high_numbers),
             history=[record.reds for record in records],
             config=config,
+            history_periods=len(records),
         )
 
     # -- 权重 ---------------------------------------------------------------
@@ -227,8 +239,13 @@ class SelectionStrategy:
             f"（3 连号实测 {self.report.long_run.index:.3f} 偏热，已避开）",
             f"蓝球 {blue:02d} 拥挤指数 {blue_index:.3f}，在 16 个蓝球里第 "
             f"{self.blue_rank(blue)} 冷（不改变中奖概率，只影响中奖后与人分摊的注数）",
-            f"已与历史 {len(self.history)} 期比对，红球 6 个完全相同的组合被排除"
-            f"（本次因撞历史重抽 {history_hits} 次）",
+            # 撞历史这条刻意不吹：历史只占红球组合空间的千分之三，
+            # 触发率极低，且触发后只是把一注均匀随机换成另一注均匀随机。
+            f"已与历史 {self.history_periods} 期（{len(self.history)} 组不同红球组合）比对，"
+            f"红球 6 个完全相同的组合被排除"
+            f"（本次重抽 {history_hits} 次；历史占红球组合空间仅 "
+            f"{len(self.history) / RED_COMBINATIONS:.2%}，这条基本不触发，"
+            "不改变中奖概率）",
         ]
         if relaxed:
             notes.append(
