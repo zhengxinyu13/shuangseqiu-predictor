@@ -10,6 +10,7 @@
 *.yaml text eol=lf
 *.cfg  text eol=lf
 *.ini  text eol=lf
+*.html text eol=lf
 *.txt  text eol=lf
 
 # 二进制资源，禁止做文本 diff / 换行转换
