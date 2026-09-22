@@ -11,6 +11,12 @@
 日志与按钮状态走**两条独立队列**（``updates`` / ``pending``），原因是进度行随时可能
 到达，若和最终结果挤在同一条队列里，中途来一行就会把按钮提前解锁。
 
+字号与配色集中在文件顶部的 ``FONT_*`` / ``LOG_*`` 常量里，要调就改那里。基准：
+
+- 正文不小于 11pt，日志 11pt，主标题 18pt；
+- **白底上不要用浅灰写正文**。日志正文近黑 ``#111827``、进度行 ``#334155``、
+  时间戳 ``#64748B``；Grayson 2026-09-23 反馈过「灰字白底看着费眼睛」。
+
 运行（**必须用带 tkinter 的解释器**，本机是 Python 3.14）::
 
     %USERPROFILE%\\.workbuddy\\binaries\\python\\envs\\ssq-picker\\Scripts\\python.exe picker.py
@@ -54,20 +60,30 @@ from shuangseqiu.data import DATA_FILE_NAME, DEFAULT_DATA_DIR
 TITLE = "双色球选号系统"
 BG = "#F5F7FA"
 CARD = "#FFFFFF"
-INK = "#1F2933"
-MUTED = "#6B7280"
+INK = "#111827"
+MUTED = "#4A5568"
 RED_BALL = "#D32F2F"
 BLUE_BALL = "#1565C0"
-OK_GREEN = "#1B7F3B"
-WARN_AMBER = "#B4690E"
-ERR_RED = "#C0392B"
 
-FONT_UI = ("Microsoft YaHei UI", 10)
-FONT_TITLE = ("Microsoft YaHei UI", 15, "bold")
-FONT_SECTION = ("Microsoft YaHei UI", 10, "bold")
-FONT_BALL = ("Microsoft YaHei UI", 17, "bold")
-FONT_LOG = ("Consolas", 9)
-FONT_MONO = ("Consolas", 11, "bold")
+# 日志配色（2026-09-23 改）：原先正文用 #6B7280 浅灰 + 9pt 字体，
+# 白底上整片发灰、看着费眼睛。现在正文用近黑，次要信息也压到足够深，
+# 只有时间戳略浅但仍然清楚。
+LOG_BG = "#F8FAFC"
+LOG_INK = "#111827"
+LOG_STEP = "#334155"   # 进度行：深石板灰，不再是浅灰
+LOG_STAMP = "#64748B"  # 时间戳：看得出是附属信息，又不用眯眼
+OK_GREEN = "#146C33"
+WARN_AMBER = "#8A4B00"
+ERR_RED = "#A3241A"
+
+# 字号整体放大一档（Grayson 2026-09-23 反馈：界面字体偏小、看不清）
+FONT_UI = ("Microsoft YaHei UI", 11)
+FONT_TITLE = ("Microsoft YaHei UI", 18, "bold")
+FONT_SECTION = ("Microsoft YaHei UI", 12, "bold")
+FONT_BALL = ("Microsoft YaHei UI", 20, "bold")
+FONT_LOG = ("Consolas", 11)
+FONT_LOG_HEAD = ("Microsoft YaHei UI", 11, "bold")
+FONT_PATH = ("Consolas", 10)
 
 
 class PickerApp(ttk.Frame):
@@ -90,7 +106,9 @@ class PickerApp(ttk.Frame):
     def _build_widgets(self) -> None:
         self.pack(fill="both", expand=True)
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(3, weight=1)
+        # 富余高度全部给日志区（row 4）。号码卡片只占它的自然高度即可，
+        # 否则 800px 高的窗口里它会撑出一大片空白，而日志只能挤出几行。
+        self.rowconfigure(4, weight=1)
 
         header = ttk.Frame(self)
         header.grid(row=0, column=0, sticky="ew")
@@ -115,7 +133,7 @@ class PickerApp(ttk.Frame):
         self.path_var = tk.StringVar(value=str(self.data_path))
         tk.Label(
             status_card, textvariable=self.path_var, bg=CARD, fg=MUTED,
-            font=("Consolas", 8), anchor="w", padx=12,
+            font=FONT_PATH, anchor="w", padx=12,
         ).grid(row=1, column=0, sticky="ew", pady=(0, 9))
 
         # 按钮排
@@ -142,7 +160,7 @@ class PickerApp(ttk.Frame):
         self.hint_var = tk.StringVar(value="点「开始选号」抽一注。")
         tk.Label(
             result_card, textvariable=self.hint_var, bg=CARD, fg=MUTED,
-            font=FONT_UI, anchor="w", padx=12, justify="left", wraplength=620,
+            font=FONT_UI, anchor="w", padx=12, justify="left", wraplength=780,
         ).grid(row=2, column=0, sticky="ew", pady=(0, 10))
 
         # 日志
@@ -150,27 +168,32 @@ class PickerApp(ttk.Frame):
         log_card.grid(row=4, column=0, sticky="nsew", pady=(12, 0))
         log_card.columnconfigure(0, weight=1)
         log_card.rowconfigure(1, weight=1)
-        self.rowconfigure(4, weight=1)
         tk.Label(
             log_card, text="运行日志", bg=CARD, fg=INK, font=FONT_SECTION, anchor="w", padx=12,
         ).grid(row=0, column=0, sticky="w", pady=(9, 4))
         self.log = tk.Text(
-            log_card, height=11, font=FONT_LOG, bg="#FBFCFE", fg=INK, relief="flat",
-            wrap="word", padx=10, pady=8,
+            log_card, height=11, font=FONT_LOG, bg=LOG_BG, fg=LOG_INK, relief="flat",
+            wrap="word", padx=12, pady=10,
         )
         self.log.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
         self.log.configure(state="disabled")
-        for tag, colour in (("ok", OK_GREEN), ("warn", WARN_AMBER), ("err", ERR_RED), ("dim", MUTED)):
-            self.log.tag_configure(tag, foreground=colour)
+        # 日志标签：正文（无标签）用近黑；进度行与时间戳各自有专属颜色
+        self.log.tag_configure("step", foreground=LOG_STEP)
+        self.log.tag_configure("stamp", foreground=LOG_STAMP)
+        self.log.tag_configure("head", foreground=INK, font=FONT_LOG_HEAD)
+        self.log.tag_configure("ok", foreground=OK_GREEN)
+        self.log.tag_configure("warn", foreground=WARN_AMBER)
+        self.log.tag_configure("err", foreground=ERR_RED)
 
     # -- 基础动作 ----------------------------------------------------------
 
     def _log(self, text: str, tag: str | None = None) -> None:
         """写日志。多行文本只给第一行打时间戳，后续行跟着缩进对齐。"""
-        stamp = f"[{time.strftime('%H:%M:%S')}] "
         self.log.configure(state="normal")
         for index, line in enumerate(text.splitlines() or [""]):
-            self.log.insert("end", (stamp if index == 0 else "") + line + "\n", tag or "")
+            if index == 0:
+                self.log.insert("end", f"[{time.strftime('%H:%M:%S')}] ", "stamp")
+            self.log.insert("end", line + "\n", tag or "")
         self.log.see("end")
         self.log.configure(state="disabled")
 
@@ -180,7 +203,7 @@ class PickerApp(ttk.Frame):
         由后台线程（含抓取线程）调用，所以只往队列里塞字符串——
         Tkinter 的控件只能在主线程碰。
         """
-        self.updates.put(("dim", f"  {text}"))
+        self.updates.put(("step", f"  {text}"))
 
     def _set_busy(self, busy: bool) -> None:
         self.busy = busy
@@ -220,9 +243,9 @@ class PickerApp(ttk.Frame):
         if self.busy:
             return
         self._set_busy(True)
-        self._log(f"—— {title} ——", "dim")
+        self._log(f"—— {title} ——", "head")
         if subtitle:
-            self._log(subtitle, "dim")
+            self._log(subtitle, "step")
 
         def runner() -> None:
             try:
@@ -307,7 +330,7 @@ class PickerApp(ttk.Frame):
             return
         self.clipboard_clear()
         self.clipboard_append(self.last_selection.label)
-        self._log(f"已复制到剪贴板：{self.last_selection.label}", "dim")
+        self._log(f"已复制到剪贴板：{self.last_selection.label}", "step")
 
     def _render_selection(self, selection: selector.Selection) -> None:
         self.last_selection = selection
@@ -349,12 +372,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = tk.Tk()
     root.title(TITLE)
-    root.geometry("760x680")
-    root.minsize(680, 560)
+    root.geometry("880x800")
+    root.minsize(800, 680)
     root.configure(bg=BG)
     ttk.Style().theme_use("vista" if sys.platform == "win32" else "clam")
     app = PickerApp(root, args.data)
-    app._log(f"数据文件：{args.data}", "dim")
+    app._log(f"数据文件：{args.data}", "step")
     if not args.data.is_file():
         app._log(f"找不到数据文件：{args.data}", "err")
     root.mainloop()
