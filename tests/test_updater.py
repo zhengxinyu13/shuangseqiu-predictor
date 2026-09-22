@@ -447,3 +447,104 @@ def test_updates_are_applied_on_top_of_each_other(mini_workbook, local_records, 
     assert [record.issue for record in dataset.read_records(path)] == [
         2023001, 2023002, 2023003, 2023004, 2023005
     ]
+
+
+# --------------------------------------------------------------------------
+# 并行抓取与进度回调
+# --------------------------------------------------------------------------
+
+def test_both_sources_are_fetched_even_when_one_fails(mini_workbook, local_records) -> None:
+    """一个站点挂掉不该让另一个白跑。
+
+    串行实现会在第一个来源抛错时直接 return，第二个来源根本不会发起请求；
+    并行之后两个都是一开始就提交出去的。
+    """
+    path = mini_workbook(local_records)
+    called: list[str] = []
+
+    def boom():
+        called.append(updater.SOURCE_PRIMARY)
+        raise updater.UpdateError("假装站点挂了")
+
+    def other():
+        called.append(updater.SOURCE_OFFICIAL)
+        return []
+
+    result = updater.check_and_update(
+        path, {updater.SOURCE_PRIMARY: boom, updater.SOURCE_OFFICIAL: other}
+    )
+    assert result.status == "error"
+    assert set(called) == set(updater.SOURCE_NAMES)
+
+
+def test_progress_reports_each_stage_when_a_new_period_is_written(
+    mini_workbook, local_records, make_remote
+) -> None:
+    """进度回调要让界面能把过程一行行写出来。"""
+    path = mini_workbook(local_records)
+    fresh = make_remote(2023004, (5, 9, 12, 23, 26, 32), 15, dt.date(2023, 1, 10), sales=999)
+    lines: list[str] = []
+
+    result = updater.check_and_update(
+        path,
+        {updater.SOURCE_PRIMARY: lambda: list(local_records) + [fresh],
+         updater.SOURCE_OFFICIAL: lambda: [fresh]},
+        progress=lines.append,
+    )
+
+    assert result.status == "updated"
+    joined = "\n".join(lines)
+    assert "读取本地工作簿" in joined
+    assert "本地 3 期，最新 2023003期" in joined
+    assert "并行抓取" in joined
+    assert f"{updater.SOURCE_PRIMARY}：抓到 4 期，最新 2023004期" in joined
+    assert f"{updater.SOURCE_OFFICIAL}：抓到 1 期，最新 2023004期" in joined
+    assert "写入工作簿" in joined
+    assert lines[-1].startswith("完成"), f"最后一行应该是收尾语：{lines[-1]!r}"
+
+
+def test_progress_says_nothing_was_written_when_the_sources_conflict(
+    mini_workbook, local_records, make_remote
+) -> None:
+    path = mini_workbook(local_records)
+    fresh = make_remote(2023004, (5, 9, 12, 23, 26, 32), 15, dt.date(2023, 1, 10))
+    wrong = make_remote(2023004, (5, 9, 12, 23, 26, 33), 15, dt.date(2023, 1, 10))
+    lines: list[str] = []
+
+    result = updater.check_and_update(
+        path,
+        {updater.SOURCE_PRIMARY: lambda: list(local_records) + [fresh],
+         updater.SOURCE_OFFICIAL: lambda: [wrong]},
+        progress=lines.append,
+    )
+
+    assert result.status == "conflict"
+    assert any("未写入任何数据" in line for line in lines)
+
+
+def test_progress_is_optional(mini_workbook, local_records, make_remote) -> None:
+    """不传 progress 也要照常工作（CLI / 测试里的旧调用方式）。"""
+    path = mini_workbook(local_records)
+    same = [make_remote(record.issue, record.reds, record.blue, record.date) for record in local_records]
+    result = updater.check_and_update(
+        path, {updater.SOURCE_PRIMARY: lambda: same, updater.SOURCE_OFFICIAL: lambda: same}
+    )
+    assert result.status == "current"
+
+
+def test_apply_update_accepts_records_the_caller_already_read(
+    mini_workbook, local_records, make_remote
+) -> None:
+    """把已读到的记录传进去就省掉一次整表读盘，结果必须与不传时一致。"""
+    path = mini_workbook(local_records)
+    fresh = make_remote(2023004, (5, 9, 12, 23, 26, 32), 15, dt.date(2023, 1, 10), sales=42)
+    plan = updater.build_update_plan(
+        local_records, _sources(list(local_records) + [fresh], [fresh])
+    )
+
+    written, total = updater.apply_update(path, plan, local_records)
+
+    assert total == 4
+    reloaded = dataset.read_records(written)
+    assert [record.issue for record in reloaded] == [2023001, 2023002, 2023003, 2023004]
+    assert reloaded[-1].sales == 42

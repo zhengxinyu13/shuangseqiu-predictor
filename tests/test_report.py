@@ -112,8 +112,9 @@ def test_render_markdown_carries_key_findings(draws):
     quality, summary = _context(draws)
     markdown = render_markdown(quality, summary, "2026-01-01 00:00", FIGURE_KEYS)
 
-    assert str(quality.total_records) in markdown  # 3505
-    assert str(quality.trusted_count) in markdown  # 3505
+    # 报告里的期数必须来自计算结果，不能是模板里写死的数字
+    assert str(quality.total_records) in markdown
+    assert str(quality.trusted_count) in markdown
     assert "三源交叉校验" in markdown
     assert "55128.cn" in markdown  # 说明为何弃用该数据源
     assert f"{summary['chi_square']['red']['p_value']:.3f}" in markdown

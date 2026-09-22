@@ -3,8 +3,10 @@
 这批断言把「号码偏好反推」的每一格数字都钉死了。它们同时起两个作用：
 
 - 守住公式本身（基线必须落在 0.990，说明「实际注数 / 理论注数」自洽）；
-- 守住读取口径（可用期数是 3416 而不是 3505 —— 2003 年整整 89 期销售额为 0，
-  必须被排除；漏排除时基线数值碰巧不变，但可用期数会露馅）。
+- 守住读取口径（可用期数必须是「总期数 − 89」—— 2003 年整整 89 期销售额为 0，
+  必须被排除；漏排除时基线数值碰巧几乎不变，但可用期数会露馅）。
+
+随开奖变化的期数类数字统一放在 :mod:`expected_data`，刷新方法见那个文件。
 """
 
 from __future__ import annotations
@@ -12,14 +14,19 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
+from expected_data import (
+    BASELINE_ACTUAL_WINNERS,
+    BASELINE_EXPECTED_WINNERS,
+    PERIODS,
+    PERIODS_WITHOUT_SALES,
+    USABLE_PERIODS,
+)
 
 from shuangseqiu import crowding
 from shuangseqiu.dataset import DrawRecord
 
-# 实测值来自 2026-09-20 的全量重算，容差取到小数点后三位
+# 容差取到小数点后三位
 TOLERANCE = 0.001
-USABLE_PERIODS = 3416
-TOTAL_PERIODS = 3505
 
 
 def measured(value: float):
@@ -37,20 +44,21 @@ def test_baseline_confirms_the_formula(records) -> None:
     """基线是公式的自检项：实际一等奖注数应当非常接近理论注数。"""
     report = crowding.compute_crowding(records)
     assert report.baseline.index == pytest.approx(0.990, abs=0.002)
-    assert report.baseline.actual_winners == 28220
-    assert report.baseline.expected_winners == pytest.approx(28507, abs=1)
+    assert report.baseline.actual_winners == BASELINE_ACTUAL_WINNERS
+    assert report.baseline.expected_winners == pytest.approx(BASELINE_EXPECTED_WINNERS, abs=1)
 
 
 def test_usable_periods_exclude_the_years_without_sales(records) -> None:
     """哨兵：销售额为 0 的期次必须被排除。
 
-    2003 年共 89 期销售额为 0（3505 - 89 = 3416）。曾经因为
-    ``has_bonus`` 漏写括号，这个过滤被静默跳过、算成 3505。
+    2003 年共 89 期销售额为 0。曾经因为 ``has_bonus`` 漏写括号，这个过滤被
+    静默跳过、可用期数被算成了全部期数。
     """
     report = crowding.compute_crowding(records)
     assert report.usable_periods == USABLE_PERIODS
     without_sales = [record for record in records if not record.has_bonus]
-    assert len(without_sales) == TOTAL_PERIODS - USABLE_PERIODS == 89
+    assert len(without_sales) == PERIODS_WITHOUT_SALES
+    assert PERIODS - PERIODS_WITHOUT_SALES == USABLE_PERIODS
     assert {record.year for record in without_sales} == {2003}
 
 

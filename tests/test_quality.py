@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from expected_data import PERIODS, YEAR_COUNTS, YEARS
+
 from shuangseqiu.quality import (
     MAX_PLAUSIBLE_DRAWS_PER_YEAR,
     build_quality_report,
@@ -68,43 +70,12 @@ def test_missing_years_detected(make_draw):
 
 
 # ------------------------------------------------------------ 真实数据断言
-
-EXPECTED_PERIODS = 3505
-EXPECTED_YEARS = tuple(range(2003, 2027))
-
-# 各年份期数的实测基线（2003–2004 年每周 2 期，2005 年起每周 3 期，2020 年因疫情减期）。
-# 数据被替换、漏采或截断时，这条断言会立刻报警。
-EXPECTED_YEAR_COUNTS = {
-    2003: 89,
-    2004: 122,
-    2005: 153,
-    2006: 154,
-    2007: 153,
-    2008: 154,
-    2009: 154,
-    2010: 153,
-    2011: 153,
-    2012: 154,
-    2013: 154,
-    2014: 152,
-    2015: 154,
-    2016: 153,
-    2017: 154,
-    2018: 153,
-    2019: 151,
-    2020: 134,
-    2021: 150,
-    2022: 150,
-    2023: 151,
-    2024: 151,
-    2025: 151,
-    2026: 108,
-}
+# 期数、年度分布等随开奖变化的基线统一放在 expected_data.py，刷新方法见那个文件。
 
 
 def test_real_data_record_count(draws):
-    assert len(draws) == EXPECTED_PERIODS
-    assert build_quality_report(draws).total_records == EXPECTED_PERIODS
+    assert len(draws) == PERIODS
+    assert build_quality_report(draws).total_records == PERIODS
 
 
 def test_real_data_has_no_suspect_years(draws):
@@ -113,8 +84,8 @@ def test_real_data_has_no_suspect_years(draws):
 
     assert report.suspect_years == ()
     assert report.suspect_count == 0
-    assert report.trusted_years == EXPECTED_YEARS
-    assert report.trusted_count == EXPECTED_PERIODS
+    assert report.trusted_years == YEARS
+    assert report.trusted_count == PERIODS
 
 
 def test_real_data_has_no_missing_years(draws):
@@ -133,7 +104,7 @@ def test_real_data_year_period_counts_match_baseline(draws):
     """各年份期数锁定为实测基线。"""
     actual = {profile.year: profile.count for profile in build_quality_report(draws).profiles}
 
-    assert actual == EXPECTED_YEAR_COUNTS
+    assert actual == YEAR_COUNTS
 
 
 def test_real_data_no_year_exceeds_physical_limit(draws):

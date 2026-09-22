@@ -11,6 +11,7 @@ import random
 from math import comb
 
 import pytest
+from expected_data import DISTINCT_RED_GROUPS, DUPLICATE_RED_PAIRS, PERIODS
 
 from shuangseqiu import crowding, selector
 from shuangseqiu.dataset import DrawRecord, longest_run
@@ -217,8 +218,8 @@ def test_notes_quote_the_measured_indices(strategy, records) -> None:
 
 def test_history_periods_and_distinct_groups_are_both_reported(strategy, records) -> None:
     """说明文案里的「期数」与「组数」都不能少，否则界面数字会自相矛盾。"""
-    assert strategy.history_periods == len(records) == 3505
-    assert len(strategy.history) == 3499
+    assert strategy.history_periods == len(records) == PERIODS
+    assert len(strategy.history) == DISTINCT_RED_GROUPS
 
 
 def test_select_numbers_convenience_wrapper(records) -> None:
@@ -227,12 +228,12 @@ def test_select_numbers_convenience_wrapper(records) -> None:
 
 
 def test_historical_red_set_repeats_are_exactly_what_chance_predicts(records) -> None:
-    """3505 期里有 6 对红球完全重复 —— 这不是异常，正是随机该有的数量。
+    """历史里确实有红球完全重复的期，但那正是随机该有的数量。
 
-    生日问题：n 期里出现重复对的期望是 ``n(n-1)/(2N)``，N = C(33,6) = 1 107 568，
-    即 `3505×3504/(2×1_107_568) ≈ 5.54` 对，实测 6 对，完全落在随机涨落内。
+    生日问题：n 期里出现重复对的期望是 ``n(n-1)/(2N)``，N = C(33,6) = 1 107 568。
+    实测对数与这个期望的差不到 2 对，完全落在随机涨落内。
 
-    所以「排除历史撞号」这条规则的触发概率极低（历史只占红球组合空间的 0.32%），
+    所以「排除历史撞号」这条规则的触发概率极低（历史只占红球组合空间的千分之三），
     Grayson 2026-09-20 指出「概率太低、可以忽略不计」是对的，
     这条断言就是用来防止后人再把它当成什么发现去吹。
     """
@@ -243,8 +244,8 @@ def test_historical_red_set_repeats_are_exactly_what_chance_predicts(records) ->
 
     space = comb(33, 6)
     expected_pairs = len(records) * (len(records) - 1) / (2 * space)
-    assert len(duplicated) == 6
-    assert len(seen) == 3499
+    assert len(duplicated) == DUPLICATE_RED_PAIRS
+    assert len(seen) == DISTINCT_RED_GROUPS
     assert abs(len(duplicated) - expected_pairs) < 2, (
         f"实测 {len(duplicated)} 对 vs 随机期望 {expected_pairs:.2f} 对，不该差这么多"
     )

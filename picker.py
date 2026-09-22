@@ -5,7 +5,11 @@
 - **检查更新**：抓 ``55128.cn`` 与官方 ``cwl.gov.cn``，两者逐列一致才写进
   ``data/双色球历史开奖数据_全量.xlsx``；对不上就拒绝写入并报出是第几期。
 - **开始选号**：按拥挤度分析的结论抽一注（红球偏 32/33 与大和值、避开 3 连号、
-  蓝球按实测冷热度加权），并排除与历史 3505 期红球完全相同的组合。
+  蓝球按实测冷热度加权），并排除与历史红球完全相同的组合。
+
+窗口下方的「运行日志」按时间戳记录全过程：抓取进度、交叉校验结论、写盘、耗时。
+日志与按钮状态走**两条独立队列**（``updates`` / ``pending``），原因是进度行随时可能
+到达，若和最终结果挤在同一条队列里，中途来一行就会把按钮提前解锁。
 
 运行（**必须用带 tkinter 的解释器**，本机是 Python 3.14）::
 
@@ -23,6 +27,7 @@ import argparse
 import queue
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -72,6 +77,7 @@ class PickerApp(ttk.Frame):
         super().__init__(master, padding=14)
         self.data_path = data_path
         self.pending: queue.Queue[tuple[Callable, object]] = queue.Queue()
+        self.updates: queue.Queue[tuple[str, str]] = queue.Queue()
         self.busy = False
         self.last_selection: selector.Selection | None = None
 
@@ -160,10 +166,21 @@ class PickerApp(ttk.Frame):
     # -- 基础动作 ----------------------------------------------------------
 
     def _log(self, text: str, tag: str | None = None) -> None:
+        """写日志。多行文本只给第一行打时间戳，后续行跟着缩进对齐。"""
+        stamp = f"[{time.strftime('%H:%M:%S')}] "
         self.log.configure(state="normal")
-        self.log.insert("end", text + "\n", tag or "")
+        for index, line in enumerate(text.splitlines() or [""]):
+            self.log.insert("end", (stamp if index == 0 else "") + line + "\n", tag or "")
         self.log.see("end")
         self.log.configure(state="disabled")
+
+    def _progress(self, text: str) -> None:
+        """进程回调：把一行进展投递给界面线程。
+
+        由后台线程（含抓取线程）调用，所以只往队列里塞字符串——
+        Tkinter 的控件只能在主线程碰。
+        """
+        self.updates.put(("dim", f"  {text}"))
 
     def _set_busy(self, busy: bool) -> None:
         self.busy = busy
@@ -198,6 +215,7 @@ class PickerApp(ttk.Frame):
         注意：只有 ``work`` 的**最终返回值**会被投递回界面线程
         （由 :meth:`_handle` 统一收尾并解除忙碌态），因此 ``work`` 内部
         不要自行往 ``pending`` 里塞东西，否则会提前把按钮解锁。
+        过程中的进展请走 :meth:`_progress`，那是另一条只写日志的通道。
         """
         if self.busy:
             return
@@ -216,7 +234,22 @@ class PickerApp(ttk.Frame):
         threading.Thread(target=runner, daemon=True).start()
 
     def _drain(self) -> None:
-        """把后台结果搬到界面线程执行。"""
+        """把后台结果搬到界面线程执行。
+
+        两条通道刻意分开：
+
+        - ``pending`` 只放**最终结果**，处理完解除忙碌态；
+        - ``updates`` 放过程日志，只写日志、不碰按钮状态。
+
+        若把两者挤进同一条队列，中途任何一行进度都会顺带把按钮解锁，
+        于是任务还在跑、按钮却变可点了。
+        """
+        while True:
+            try:
+                tag, text = self.updates.get_nowait()
+            except queue.Empty:
+                break
+            self._log(text, tag)
         while True:
             try:
                 handler, payload = self.pending.get_nowait()
@@ -237,27 +270,31 @@ class PickerApp(ttk.Frame):
 
     def on_check_update(self) -> None:
         def work() -> tuple[str, str, object]:
-            result = updater.check_and_update(self.data_path)
+            started = time.perf_counter()
+            result = updater.check_and_update(self.data_path, progress=self._progress)
+            elapsed = time.perf_counter() - started
             tag = {"updated": "ok", "current": "ok", "conflict": "warn", "error": "err"}[result.status]
             lines = [result.message]
             if result.plan is not None:
-                for name, periods, latest in result.plan.source_rows:
-                    lines.append(f"  · {name}：抓到 {periods} 期，最新 {latest}期")
                 for row in result.plan.check_rows:
                     if row[0] == "交叉校验":
                         lines.append(f"  · {row[1]}：{row[3]}")
             if result.status == "conflict":
                 lines.append("  未写入任何数据——两个来源对不上时报出来比写进去更重要。")
+            lines.append(f"  耗时 {elapsed:.2f} 秒")
             return (tag, "\n".join(lines), None)
 
-        self._run_async(work, "检查更新", "正在抓取 55128.cn 与官方 cwl.gov.cn，逐期比对…")
+        self._run_async(work, "检查更新")
 
     # -- 选号 --------------------------------------------------------------
 
     def on_select(self) -> None:
         def work() -> tuple[str, str, object]:
+            self._progress("读取历史工作簿…")
             records = dataset.read_records(self.data_path)
+            self._progress(f"{len(records)} 期历史：重算拥挤指数并构建历史比对库…")
             strategy = selector.SelectionStrategy.from_records(records)
+            self._progress("按拥挤度加权抽样（拒绝采样，不满足条件就丢弃重抽）…")
             selection = strategy.select()
             lines = [f"选出：{selection.label}"]
             lines.extend(f"  · {note}" for note in selection.notes)

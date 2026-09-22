@@ -11,10 +11,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import time
 from pathlib import Path
 
 import openpyxl
 import pytest
+from expected_data import LATEST_ISSUE, PERIODS, YEAR_COUNTS
 
 from shuangseqiu import dataset
 
@@ -82,32 +84,33 @@ def test_as_date_accepts_excel_flavours() -> None:
 # --------------------------------------------------------------------------
 
 def test_read_records_is_ascending_and_complete(records) -> None:
-    assert len(records) == 3505
+    assert len(records) == PERIODS
     issues = [record.issue for record in records]
     assert issues == sorted(issues), "read_records 应返回升序"
     assert records[0].issue == 2003001
-    assert records[-1].issue == 2026108
+    assert records[-1].issue == LATEST_ISSUE
     assert all(len(record.reds) == 6 for record in records)
     assert all(record.date.weekday() in (1, 3, 6) for record in records)
 
 
 def test_read_records_merges_bonus_columns(records) -> None:
     latest = records[-1]
-    assert latest.reds == (6, 11, 13, 14, 20, 28)
-    assert latest.blue == 16
-    assert latest.sales == 335294274
-    assert latest.pool == 917243647
-    assert latest.first_winners == 2
-    assert latest.first_prize == 10000000
-    assert latest.second_winners == 95
-    assert latest.second_prize == 276194
+    assert latest.issue == LATEST_ISSUE
+    assert latest.reds == (9, 12, 15, 26, 30, 33)
+    assert latest.blue == 6
+    assert latest.sales == 359008756
+    assert latest.pool == 936353465
+    assert latest.first_winners == 5
+    assert latest.first_prize == 8207986
+    assert latest.second_winners == 114
+    assert latest.second_prize == 175876
 
 
 def test_has_bonus_is_a_property_not_a_method(records) -> None:
     """哨兵：``has_bonus`` 必须能在不加括号的情况下当布尔值用。
 
     曾经它是个方法，``crowding`` 里漏写括号导致「销售额过滤」被静默跳过
-    （方法对象恒为真），可用期数 3416 被算成 3505。
+    （方法对象恒为真），可用期数被算成了全部期数。
     改成属性后，少写括号会立刻 ``TypeError``，不会再静默出错。
     """
     record = records[-1]
@@ -179,7 +182,7 @@ def test_record_and_bonus_rows_are_reverse_chronological(records) -> None:
     for name in (dataset.SHEET_RECORDS, dataset.SHEET_BONUS):
         issues = [row[0] for row in sheets[name][1]]
         assert issues == sorted(issues, reverse=True), f"{name} 应为倒序"
-        assert issues[0] == 2026108
+        assert issues[0] == LATEST_ISSUE
     # 统计附表仍按升序
     for number, row in enumerate(sheets[dataset.SHEET_RED_STATS][1], start=1):
         assert row[0] == f"{number:02d}"
@@ -230,7 +233,7 @@ def test_yearly_rows_aggregate_per_year(records) -> None:
     assert rows[2003][1] == 89
     assert rows[2023][1] == 151
     assert rows[2003][6] == "周四、周日"  # 2003 年只有周四、周日开奖
-    assert rows[2026][1] == 108
+    assert rows[2026][1] == YEAR_COUNTS[2026]
 
 
 # --------------------------------------------------------------------------
@@ -242,7 +245,7 @@ def test_build_checks_passes_on_the_real_dataset(records) -> None:
     verdicts = {(row[0], row[1]): row[2] for row in rows}
     assert all(verdict == "通过" for verdict in verdicts.values()), verdicts
     assert list(rows[0][:3]) == ["完整性", "期号唯一性", "通过"]
-    assert any(row[1] == "总期数" and "3505 期" in row[3] for row in rows)
+    assert any(row[1] == "总期数" and f"{PERIODS} 期" in row[3] for row in rows)
 
 
 def test_build_checks_flags_a_non_draw_weekday(make_record) -> None:
@@ -340,3 +343,62 @@ def test_written_dates_keep_the_excel_date_format(records, tmp_path: Path) -> No
         assert bonus.cell(2, bonus_positions["销售额"]).number_format == "#,##0"
     finally:
         workbook.close()
+
+
+# --------------------------------------------------------------------------
+# 样式（美化改成单趟遍历后，这些都得原样保留）
+# --------------------------------------------------------------------------
+
+def test_written_sheet_keeps_header_ball_and_zebra_styling(records, tmp_path: Path) -> None:
+    """表头底色、红蓝球底色、边框、斑马纹一个都不能少。
+
+    ``_apply_style`` 为了性能从「逐格 worksheet.cell」改成「整行 iter_rows」，
+    这条测试就是那次改写的守门人：只快不改样。
+    """
+    subset = records[-6:]
+    out = dataset.write_records(tmp_path / "style.xlsx", subset, dataset.build_checks(subset))
+    workbook = openpyxl.load_workbook(out)
+    try:
+        sheet = workbook[dataset.SHEET_RECORDS]
+        positions = {cell.value: cell.column for cell in sheet[1]}
+
+        assert sheet.cell(1, 1).fill.start_color.rgb.endswith("1F4E79"), "表头底色丢了"
+        assert sheet.cell(2, positions["红球1"]).fill.start_color.rgb.endswith("FDE7E7"), "红球底色丢了"
+        assert sheet.cell(2, positions["蓝球"]).fill.start_color.rgb.endswith("E4EEFB"), "蓝球底色丢了"
+        assert sheet.cell(2, 1).border.left.style == "thin", "边框丢了"
+        assert sheet.freeze_panes == "A2", "冻结首行丢了"
+
+        # 斑马纹只看没有专属底色的列（红球/蓝球列本来就恒有底色）
+        striped = positions["和值"]
+        assert sheet.cell(2, striped).fill.start_color.rgb.endswith("F7F9FC"), "偶数行没有斑马纹"
+        assert sheet.cell(3, striped).fill.patternType is None, "奇数行不该有斑马纹"
+    finally:
+        workbook.close()
+
+
+def test_styling_a_full_size_sheet_stays_fast(tmp_path: Path) -> None:
+    """3500 行的表必须很快美化完。
+
+    旧写法对每个单元格调一次 ``worksheet.cell(row, column)``（按行列号做字典查找），
+    还在内层循环里逐格 new 一个 ``Border``：3500 行 × 18 列要跑 6 万多次，
+    实测单这一步 10.7 秒，占了「检查更新」九成耗时。这里给一个宽到不会误报、
+    但足以拦住退回旧写法的上限。
+    """
+    rows = [
+        [2023000 + index, 2023, index, dt.date(2023, 1, 1), "周日",
+         1, 2, 3, 4, 5, 6, 7, 28, 5, "3:3", "2:4", "2:2:2", None]
+        for index in range(1, 3501)
+    ]
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.title = dataset.SHEET_RECORDS
+    worksheet.append(list(dataset.RECORD_HEADER))
+    for row in rows:
+        worksheet.append(row)
+
+    started = time.perf_counter()
+    dataset._apply_style(workbook, {dataset.SHEET_RECORDS: (dataset.RECORD_HEADER, rows)})
+    elapsed = time.perf_counter() - started
+    workbook.close()
+
+    assert elapsed < 5.0, f"美化 3500 行花了 {elapsed:.1f} 秒，疑似退回了逐格 worksheet.cell 的写法"

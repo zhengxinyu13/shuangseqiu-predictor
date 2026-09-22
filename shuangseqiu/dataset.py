@@ -491,58 +491,83 @@ def build_sheets(
 # 写出
 # --------------------------------------------------------------------------
 
+# 样式对象一律做成模块级常量。openpyxl 的样式是不可变值对象，可以被成千上万个
+# 单元格安全共享；原先在双层循环里逐格 new 一个 Border，3500 行的表要多造 6 万多个
+# 临时对象，这是「检查更新」慢的主因。
+_HEAD_FILL = PatternFill("solid", fgColor="1F4E79")
+_HEAD_FONT = Font(color="FFFFFF", bold=True, size=10)
+_RED_FILL = PatternFill("solid", fgColor="FDE7E7")
+_BLUE_FILL = PatternFill("solid", fgColor="E4EEFB")
+_ALT_FILL = PatternFill("solid", fgColor="F7F9FC")
+_THIN_SIDE = Side(style="thin", color="D6DCE4")
+_CELL_BORDER = Border(left=_THIN_SIDE, right=_THIN_SIDE, top=_THIN_SIDE, bottom=_THIN_SIDE)
+_CENTERED = Alignment(horizontal="center")
+_HEAD_ALIGN = Alignment(horizontal="center", vertical="center")
+
+_RED_BALL_COLUMNS: tuple[str, ...] = tuple(f"红球{n}" for n in range(1, 7))
+_CENTERED_COLUMNS: tuple[str, ...] = (
+    "期号", "年份", "期序", "星期", "蓝球", "和值", "跨度", "奇偶比", "大小比", "三区比", "连号",
+)
+
+_WIDTH_SAMPLE_ROWS = 300
+
+
+def _column_indexes(worksheet, names: Sequence[str]) -> list[int]:
+    """把列名映射成 1 起的列号（一次读完表头，供逐行遍历时按下标取用）。"""
+    positions = {cell.value: cell.column for cell in worksheet[1]}
+    return [positions[name] for name in names]
+
+
 def _apply_style(workbook, sheets: Mapping[str, tuple[Sequence[str], Sequence[Sequence[Any]]]]) -> None:
     """按原表样式统一美化：深蓝表头、斑马纹、红蓝球底色、日期与百分比格式。
 
     特殊样式只对**存在**的工作表生效，因此这里也接受只含部分表的临时工作簿。
-    """
-    head_fill = PatternFill("solid", fgColor="1F4E79")
-    head_font = Font(color="FFFFFF", bold=True, size=10)
-    red_fill = PatternFill("solid", fgColor="FDE7E7")
-    blue_fill = PatternFill("solid", fgColor="E4EEFB")
-    alt_fill = PatternFill("solid", fgColor="F7F9FC")
-    thin = Side(style="thin", color="D6DCE4")
-    centered = Alignment(horizontal="center")
 
+    性能要点：整表只用 ``iter_rows()`` 走一趟，边框与斑马纹在同一次遍历里打完，
+    不再对每个单元格调一次 ``worksheet.cell(row, column)``。后者是按行列号做字典
+    查找，3500 行 × 18 列要调 6 万多次，实测仅这一步就占 10 秒以上。
+    """
     for worksheet in workbook.worksheets:
         for cell in worksheet[1]:
-            cell.fill, cell.font = head_fill, head_font
-            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.fill, cell.font = _HEAD_FILL, _HEAD_FONT
+            cell.alignment = _HEAD_ALIGN
         worksheet.freeze_panes = "A2"
         worksheet.row_dimensions[1].height = 22
 
-        for column in range(1, worksheet.max_column + 1):
-            letter = get_column_letter(column)
-            sample = (
-                str(worksheet.cell(row, column).value or "")
-                for row in range(1, min(worksheet.max_row, 300) + 1)
-            )
-            width = max((len(text) for text in sample), default=8)
-            worksheet.column_dimensions[letter].width = min(max(width * 1.8, 9), 40)
-            for row in range(2, worksheet.max_row + 1):
-                worksheet.cell(row, column).border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        # 先把行取出来复用：列宽取样与样式遍历共用同一份，避免重复走访存接口
+        body_rows = list(worksheet.iter_rows(min_row=2))
+        sample_rows = [tuple(worksheet[1]), *body_rows[: _WIDTH_SAMPLE_ROWS - 1]]
 
-        for row in range(2, worksheet.max_row + 1):  # 斑马纹，长表更易读
-            if row % 2 == 0:
-                for column in range(1, worksheet.max_column + 1):
-                    cell = worksheet.cell(row, column)
-                    if cell.fill.patternType is None:
-                        cell.fill = alt_fill
+        for column in range(1, worksheet.max_column + 1):
+            width = max(
+                (len(str(row[column - 1].value or "")) for row in sample_rows if len(row) >= column),
+                default=8,
+            )
+            worksheet.column_dimensions[get_column_letter(column)].width = min(max(width * 1.8, 9), 40)
+
+        for index, cells in enumerate(body_rows, start=2):  # 边框 + 斑马纹，一趟搞定
+            striped = index % 2 == 0
+            for cell in cells:
+                cell.border = _CELL_BORDER
+                if striped and cell.fill.patternType is None:
+                    cell.fill = _ALT_FILL
 
     if SHEET_RECORDS in workbook.sheetnames:
         records_sheet = workbook[SHEET_RECORDS]
-        positions = {cell.value: cell.column for cell in records_sheet[1]}
-        for name in ("红球1", "红球2", "红球3", "红球4", "红球5", "红球6"):
-            for row in range(2, records_sheet.max_row + 1):
-                records_sheet.cell(row, positions[name]).fill = red_fill
-                records_sheet.cell(row, positions[name]).alignment = centered
-        for name in ("期号", "年份", "期序", "星期", "蓝球", "和值", "跨度", "奇偶比", "大小比", "三区比", "连号"):
-            for row in range(2, records_sheet.max_row + 1):
-                records_sheet.cell(row, positions[name]).alignment = centered
-        for row in range(2, records_sheet.max_row + 1):
-            records_sheet.cell(row, positions["蓝球"]).fill = blue_fill
-            records_sheet.cell(row, positions["开奖日期"]).number_format = "yyyy-mm-dd"
-            records_sheet.cell(row, positions["开奖日期"]).alignment = centered
+        red_columns = _column_indexes(records_sheet, _RED_BALL_COLUMNS)
+        centered_columns = _column_indexes(records_sheet, _CENTERED_COLUMNS)
+        blue_column = _column_indexes(records_sheet, ("蓝球",))[0]
+        date_column = _column_indexes(records_sheet, ("开奖日期",))[0]
+
+        for cells in records_sheet.iter_rows(min_row=2):
+            for column in red_columns:
+                cell = cells[column - 1]
+                cell.fill, cell.alignment = _RED_FILL, _CENTERED
+            for column in centered_columns:
+                cells[column - 1].alignment = _CENTERED
+            cells[blue_column - 1].fill = _BLUE_FILL
+            date_cell = cells[date_column - 1]
+            date_cell.number_format, date_cell.alignment = "yyyy-mm-dd", _CENTERED
         records_sheet.auto_filter.ref = records_sheet.dimensions
 
     for name in (SHEET_RED_STATS, SHEET_BLUE_STATS):
@@ -551,8 +576,9 @@ def _apply_style(workbook, sheets: Mapping[str, tuple[Sequence[str], Sequence[Se
         worksheet = workbook[name]
         columns = [cell.value for cell in worksheet[1]]
         for column_name in ("出现频率", "理论频率"):
-            for row in range(2, worksheet.max_row + 1):
-                worksheet.cell(row, columns.index(column_name) + 1).number_format = "0.00%"
+            position = columns.index(column_name)
+            for cells in worksheet.iter_rows(min_row=2):
+                cells[position].number_format = "0.00%"
 
     if SHEET_CHECKS in workbook.sheetnames:
         checks_sheet = workbook[SHEET_CHECKS]
@@ -563,8 +589,9 @@ def _apply_style(workbook, sheets: Mapping[str, tuple[Sequence[str], Sequence[Se
         bonus_sheet = workbook[SHEET_BONUS]
         bonus_columns = [cell.value for cell in bonus_sheet[1]]
         for column_name in ("销售额", "奖池", "一等奖单注奖金", "二等奖单注奖金"):
-            for row in range(2, bonus_sheet.max_row + 1):
-                bonus_sheet.cell(row, bonus_columns.index(column_name) + 1).number_format = "#,##0"
+            position = bonus_columns.index(column_name)
+            for cells in bonus_sheet.iter_rows(min_row=2):
+                cells[position].number_format = "#,##0"
 
 
 def write_workbook(

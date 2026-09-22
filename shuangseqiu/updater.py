@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -44,6 +45,9 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 TIMEOUT = 30.0
+
+Progress = Callable[[str], None]
+"""进度回调：接收一行人类可读的进展文本。界面用它把过程写进日志。"""
 
 # 55128.cn 列表页：行 / 单元格 / 号码 span / 日期 / 期号
 _ROW = re.compile(r"<tr>(.*?)</tr>", re.S)
@@ -280,6 +284,47 @@ def fetch_official(count: int = 100, client: httpx.Client | None = None) -> list
     return parse_official(payload)
 
 
+def _fetch_sources(
+    loaders: Mapping[str, Callable[[], Sequence[RemoteDraw]]],
+    notify: Progress,
+) -> tuple[dict[str, Sequence[RemoteDraw]], list[str]]:
+    """并行抓取全部来源。
+
+    两个站点互不依赖，串行只会把耗时相加（实测 0.65 秒 + 0.45 秒）。并行之后总耗时
+    取决于最慢的那个；更关键的是某个站点卡到 30 秒超时时，另一个不会被拖着一起等。
+
+    Args:
+        loaders: ``来源名 -> 抓取函数``。
+        notify: 每抓完一个来源回调一次；由抓取线程调用，实现需自带线程安全。
+
+    Returns:
+        ``(成功结果, 错误信息)``。错误按 :data:`SOURCE_NAMES` 顺序排列，便于稳定断言。
+    """
+    fetched: dict[str, Sequence[RemoteDraw]] = {}
+    errors: dict[str, str] = {}
+
+    with ThreadPoolExecutor(max_workers=len(SOURCE_NAMES), thread_name_prefix="ssq-fetch") as pool:
+        futures = {pool.submit(loaders[name]): name for name in SOURCE_NAMES}
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                rows = future.result()
+            except UpdateError as error:
+                errors[name] = f"抓取 {name} 失败：{error}"
+                continue
+            except Exception as error:  # 网络/解析之外的其他意外，也要变成可读提示
+                errors[name] = f"抓取 {name} 时出现意外错误：{error!r}"
+                continue
+            fetched[name] = rows
+            notify(
+                f"{name}：抓到 {len(rows)} 期，最新 {max(r.issue for r in rows)}期"
+                if rows
+                else f"{name}：未取到数据"
+            )
+
+    return fetched, [errors[name] for name in SOURCE_NAMES if name in errors]
+
+
 # --------------------------------------------------------------------------
 # 比对与计划
 # --------------------------------------------------------------------------
@@ -453,12 +498,19 @@ class UpdateResult:
         return self.status in {"updated", "current"}
 
 
-def apply_update(path: Path | str, plan: UpdatePlan) -> tuple[Path, int]:
+def apply_update(
+    path: Path | str,
+    plan: UpdatePlan,
+    records: Sequence[DrawRecord] | None = None,
+) -> tuple[Path, int]:
     """把计划里的新记录并入工作簿并重算全部派生表。
 
     Args:
         path: 工作簿路径。
         plan: :func:`build_update_plan` 的结果，且 ``can_write`` 必须为真。
+        records: 已有的本地记录。调用方刚读过就直接传进来，省掉一次整表读盘；
+            传 ``None`` 时自己读。注意：传进来的必须是**这份计划所依据的**那一版数据，
+            否则合并结果会与校验结论对不上。
 
     Returns:
         ``(实际写入路径, 新总期数)``。
@@ -471,9 +523,9 @@ def apply_update(path: Path | str, plan: UpdatePlan) -> tuple[Path, int]:
         raise ValueError(f"计划存在冲突，不能写盘：{plan.conflicts[:3]}")
 
     target = Path(path)
-    records = read_records(target)
+    current = list(records) if records is not None else read_records(target)
     merged = sorted(
-        {record.issue: record for record in list(records) + list(plan.new_records)}.values(),
+        {record.issue: record for record in [*current, *plan.new_records]}.values(),
         key=lambda record: record.issue,
     )
     written = write_records(target, merged, build_checks(merged, plan.check_rows))
@@ -483,6 +535,7 @@ def apply_update(path: Path | str, plan: UpdatePlan) -> tuple[Path, int]:
 def check_and_update(
     path: Path | str,
     fetchers: Mapping[str, Callable[[], Sequence[RemoteDraw]]] | None = None,
+    progress: Progress | None = None,
 ) -> UpdateResult:
     """检查更新：抓两个来源 → 校验 → 一致则写盘。
 
@@ -490,6 +543,9 @@ def check_and_update(
         path: 工作簿路径。
         fetchers: ``来源名 -> 抓取函数``。默认走真实网络；
             测试里注入假函数即可完全离线。
+        progress: 进度回调，每次收到一行人类可读的进展文本。界面用它把过程写进日志；
+            测试里传 ``list.append`` 就能断言。回调会在后台线程（含抓取线程）被调用，
+            实现必须自己保证线程安全。
 
     Returns:
         :class:`UpdateResult`。任何失败都通过 ``status`` 与 ``message`` 返回，不抛异常，
@@ -497,27 +553,29 @@ def check_and_update(
     """
     target = Path(path)
     loaders = dict(fetchers or {SOURCE_PRIMARY: fetch_55128, SOURCE_OFFICIAL: fetch_official})
+    notify: Progress = progress or (lambda _message: None)
 
+    notify("读取本地工作簿…")
     try:
         local = read_records(target)
     except (OSError, ValueError) as error:
         return UpdateResult("error", f"读取本地数据失败：{error}")
+    notify(f"本地 {len(local)} 期，最新 {local[-1].label}")
 
-    fetched: dict[str, Sequence[RemoteDraw]] = {}
     for name in SOURCE_NAMES:
-        loader = loaders.get(name)
-        if loader is None:
+        if name not in loaders:
             return UpdateResult("error", f"未提供数据源 {name!r} 的抓取函数")
-        try:
-            fetched[name] = loader()
-        except UpdateError as error:
-            return UpdateResult("error", f"抓取 {name} 失败：{error}")
-        except Exception as error:  # 网络/解析之外的其他意外，也要变成可读提示
-            return UpdateResult("error", f"抓取 {name} 时出现意外错误：{error!r}")
 
+    notify(f"并行抓取 {SOURCE_PRIMARY} 与 {SOURCE_OFFICIAL}…")
+    fetched, errors = _fetch_sources(loaders, notify)
+    if errors:
+        return UpdateResult("error", errors[0])
+
+    notify("交叉校验：新期号须两源逐列一致，重叠期回头比对本地库…")
     plan = build_update_plan(local, fetched)
 
     if plan.conflicts:
+        notify(f"发现 {len(plan.conflicts)} 处冲突，未写入任何数据")
         return UpdateResult(
             "conflict",
             "两个来源对不上，已拒绝写入：" + "；".join(plan.conflicts[:3])
@@ -528,11 +586,13 @@ def check_and_update(
 
     if not plan.has_new:
         # 没有新增期号也要回写一次：把「本次检查时间」等校验行刷新进去
+        notify("无新增期号，仅刷新「数据校验」表…")
         try:
-            written, total = apply_update(target, plan)
+            written, total = apply_update(target, plan, local)
         except (OSError, ValueError) as error:
             return UpdateResult("error", f"刷新校验信息失败：{error}", plan=plan,
                                 total_records=plan.local_total)
+        notify(f"完成：本地 {total} 期已是最新")
         return UpdateResult(
             "current",
             f"已是最新，本地 {plan.local_total} 期，最新 {plan.local_latest}期。"
@@ -542,10 +602,12 @@ def check_and_update(
             total_records=total,
         )
 
+    notify(f"写入工作簿：新增 {len(plan.new_records)} 期，6 张表全部重算…")
     try:
-        written, total = apply_update(target, plan)
+        written, total = apply_update(target, plan, local)
     except OSError as error:
         return UpdateResult("error", str(error), plan=plan, total_records=plan.local_total)
+    notify(f"完成：本地共 {total} 期")
 
     issues = "、".join(record.label for record in plan.new_records)
     return UpdateResult(

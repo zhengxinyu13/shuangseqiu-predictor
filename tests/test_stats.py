@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import pytest
+from expected_data import LATEST_ISSUE, PERIODS
 
 from shuangseqiu.quality import build_quality_report
 from shuangseqiu.stats import (
@@ -194,15 +195,15 @@ def test_build_summary_structure(make_draw):
 
 # --------------------------------------------------------- 真实数据断言
 
-# 全量数据集的结构校验结论：3505 期全部可信，无一剔除。
-EXPECTED_PERIODS = 3505
+# 全量数据集的结构校验结论：全部期数均可信，无一剔除。
+# 期数本身随每次开奖变化，统一钉在 expected_data.py。
 
 
 def test_real_trusted_segment_keeps_every_record(draws):
     report = build_quality_report(draws)
 
-    assert report.total_records == EXPECTED_PERIODS
-    assert report.trusted_count == EXPECTED_PERIODS
+    assert report.total_records == PERIODS
+    assert report.trusted_count == PERIODS
     assert report.suspect_count == 0
 
 
@@ -211,14 +212,14 @@ def test_real_trusted_summary_is_self_consistent(draws):
     summary = build_summary(report.trusted_draws)
     meta = summary["meta"]
 
-    assert meta["periods"] == EXPECTED_PERIODS
-    assert meta["first_issue"] == "2026108期"  # 文件是倒序，首行即最新一期
+    assert meta["periods"] == PERIODS
+    assert meta["first_issue"] == f"{LATEST_ISSUE}期"  # 文件是倒序，首行即最新一期
     assert meta["last_issue"] == "2003001期"  # 末行即历史首期
     assert meta["years"] == list(range(2003, 2027))
 
-    assert sum(item["count"] for item in summary["red_frequency"]) == EXPECTED_PERIODS * 6
-    assert sum(item["count"] for item in summary["blue_frequency"]) == EXPECTED_PERIODS
-    assert len(summary["sums"]["values"]) == EXPECTED_PERIODS
+    assert sum(item["count"] for item in summary["red_frequency"]) == PERIODS * 6
+    assert sum(item["count"] for item in summary["blue_frequency"]) == PERIODS
+    assert len(summary["sums"]["values"]) == PERIODS
     assert len(summary["heatmap"]["matrix"]) == len(meta["years"])
 
 
@@ -233,26 +234,26 @@ def test_real_trusted_omission_is_consistent(draws):
     assert blue_zero == 1
 
     for value in summary["red_omission_current"].values():
-        assert 0 <= value <= EXPECTED_PERIODS
+        assert 0 <= value <= PERIODS
     for value in summary["blue_omission_current"].values():
-        assert 0 <= value <= EXPECTED_PERIODS
+        assert 0 <= value <= PERIODS
 
 
 def test_real_sum_histogram_covers_every_period(draws):
     """和值/跨度分桶必须不重不漏地装下所有期数，否则图表会少算。"""
     summary = build_summary(build_quality_report(draws).trusted_draws)
 
-    assert sum(summary["sums"]["hist"]["counts"]) == EXPECTED_PERIODS
-    assert sum(summary["spans"]["hist"]["counts"]) == EXPECTED_PERIODS
+    assert sum(summary["sums"]["hist"]["counts"]) == PERIODS
+    assert sum(summary["spans"]["hist"]["counts"]) == PERIODS
 
 
 def test_real_shape_distributions_cover_every_period(draws):
     summary = build_summary(build_quality_report(draws).trusted_draws)
 
     for key in ("odd_even", "big_small", "consecutive", "zones", "ac_values"):
-        assert sum(summary[key]["counts"]) == EXPECTED_PERIODS, f"{key} 分布未覆盖全部期数"
+        assert sum(summary[key]["counts"]) == PERIODS, f"{key} 分布未覆盖全部期数"
     # 重号是"与上一期比较"，最新一期没有上一期，故比期数少 1
-    assert sum(summary["repeats"]["counts"]) == EXPECTED_PERIODS - 1
+    assert sum(summary["repeats"]["counts"]) == PERIODS - 1
 
 
 def test_real_data_has_four_or_more_repeats(draws):
