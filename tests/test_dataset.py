@@ -16,7 +16,14 @@ from pathlib import Path
 
 import openpyxl
 import pytest
-from expected_data import LATEST_ISSUE, PERIODS, YEAR_COUNTS
+from expected_data import (
+    LATEST_BLUE,
+    LATEST_BONUS,
+    LATEST_ISSUE,
+    LATEST_REDS,
+    PERIODS,
+    YEAR_COUNTS,
+)
 
 from shuangseqiu import dataset
 
@@ -96,14 +103,16 @@ def test_read_records_is_ascending_and_complete(records) -> None:
 def test_read_records_merges_bonus_columns(records) -> None:
     latest = records[-1]
     assert latest.issue == LATEST_ISSUE
-    assert latest.reds == (9, 12, 15, 26, 30, 33)
-    assert latest.blue == 6
-    assert latest.sales == 359008756
-    assert latest.pool == 936353465
-    assert latest.first_winners == 5
-    assert latest.first_prize == 8207986
-    assert latest.second_winners == 114
-    assert latest.second_prize == 175876
+    assert latest.reds == LATEST_REDS
+    assert latest.blue == LATEST_BLUE
+    assert (
+        latest.sales,
+        latest.pool,
+        latest.first_winners,
+        latest.first_prize,
+        latest.second_winners,
+        latest.second_prize,
+    ) == LATEST_BONUS
 
 
 def test_has_bonus_is_a_property_not_a_method(records) -> None:
