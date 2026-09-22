@@ -168,21 +168,63 @@ def streak_text(reds: Sequence[int]) -> str | None:
     return text or None
 
 
+def run_lengths(reds: Sequence[int]) -> list[int]:
+    """所有**连号段**的长度（只算长度 ≥2 的段，孤立号不计）。
+
+    >>> run_lengths((6, 11, 13, 14, 20, 28))
+    [2]
+    >>> run_lengths((13, 14, 15, 20, 28, 33))
+    [3]
+    >>> run_lengths((1, 5, 9, 17, 24, 33))
+    []
+    """
+    return [len(run) for run in consecutive_runs(reds) if len(run) >= 2]
+
+
+def odd_count(reds: Sequence[int]) -> int:
+    """奇数个数。
+
+    >>> odd_count((1, 2, 3, 4, 5, 6))
+    3
+    """
+    return sum(1 for number in reds if number % 2)
+
+
+def big_count(reds: Sequence[int]) -> int:
+    """大号个数（以 :data:`BIG_THRESHOLD` 为界）。
+
+    >>> big_count((1, 16, 17, 20, 30, 33))
+    4
+    """
+    return sum(1 for number in reds if number >= BIG_THRESHOLD)
+
+
+def zone_counts(reds: Sequence[int]) -> tuple[int, int, int]:
+    """三区各自的号码个数。
+
+    >>> zone_counts((3, 9, 15, 18, 24, 30))
+    (2, 2, 2)
+    """
+    return tuple(  # type: ignore[return-value]
+        sum(1 for number in reds if low <= number <= high) for low, high in ZONES
+    )
+
+
 def odd_even_text(reds: Sequence[int]) -> str:
     """奇偶比，如 ``2:4``（奇数:偶数）。"""
-    odd = sum(1 for n in reds if n % 2)
+    odd = odd_count(reds)
     return f"{odd}:{len(reds) - odd}"
 
 
 def big_small_text(reds: Sequence[int]) -> str:
     """大小比，如 ``2:4``（大:小），以 :data:`BIG_THRESHOLD` 为界。"""
-    big = sum(1 for n in reds if n >= BIG_THRESHOLD)
+    big = big_count(reds)
     return f"{big}:{len(reds) - big}"
 
 
 def zone_text(reds: Sequence[int]) -> str:
     """三区比，如 ``2:3:1``。"""
-    return ":".join(str(sum(1 for n in reds if low <= n <= high)) for low, high in ZONES)
+    return ":".join(str(count) for count in zone_counts(reds))
 
 
 def weekday_cn(day: date) -> str:

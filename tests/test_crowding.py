@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import math
+import random
 
 import pytest
 from expected_data import (
@@ -148,3 +150,101 @@ def test_empty_input_does_not_explode() -> None:
     report = crowding.compute_crowding([])
     assert report.usable_periods == 0
     assert len(report.blue) == 16
+
+
+# --------------------------------------------------------------------------
+# 「形态均衡」类口径（选号器改用形态条件后新增，2026-09-23）
+# --------------------------------------------------------------------------
+
+BALANCE_FIELDS = (
+    "odd_even_balanced",
+    "big_small_balanced",
+    "zone_balanced",
+    "one_pair_run",
+    "repeat_with_previous",
+)
+
+
+def direction(index: crowding.CrowdingIndex) -> str:
+    """按 Poisson 近似判方向：``"cold"`` / ``"hot"`` / ``"flat"``。
+
+    刻意**判方向而不钉数值**：这几项覆盖的期数少（三区 2:2:2 只有 528 期），
+    每入库一期就会漂，钉到小数点后会变成每次开奖都要改的负担。
+    但方向在 95% 置信度上是稳定的——这才是有价值的结论。
+    """
+    standard_error = math.sqrt(index.actual_winners) / index.expected_winners
+    low = index.index - 1.96 * standard_error
+    high = index.index + 1.96 * standard_error
+    if high < 1.0:
+        return "cold"
+    if low > 1.0:
+        return "hot"
+    return "flat"
+
+
+def test_balance_dimensions_are_all_populated(records) -> None:
+    report = crowding.compute_crowding(records)
+    for field in BALANCE_FIELDS:
+        index = getattr(report, field)
+        assert index.periods > 400, f"{field} 覆盖期数太少：{index.periods}"
+        assert index.expected_winners > 0
+
+
+def test_balance_dimension_directions(records) -> None:
+    """选号器那五条形态条件各自的冷热方向——这是整套规则的事实基础。
+
+    实测（2026-09-23，3507 期）：3 奇 3 偶不显著；3 大 3 小与三区 2:2:2
+    显著偏热（大众更爱买）；恰好一组二连、与上一期重号 1 个显著偏冷。
+
+    如果这条测试红了，说明 `selector` 文档里那张方向表需要重写——
+    别只改数字了事，先看清楚结论是不是真的变了。
+    """
+    report = crowding.compute_crowding(records)
+    assert direction(report.odd_even_balanced) == "flat"
+    assert direction(report.big_small_balanced) == "hot"
+    assert direction(report.zone_balanced) == "hot"
+    assert direction(report.one_pair_run) == "cold"
+    assert direction(report.repeat_with_previous) == "cold"
+
+
+@pytest.mark.parametrize(
+    ("field", "measured"),
+    [
+        ("odd_even_balanced", 1.017),
+        ("big_small_balanced", 1.066),
+        ("zone_balanced", 1.070),
+        ("one_pair_run", 0.961),
+        ("repeat_with_previous", 0.974),
+    ],
+)
+def test_balance_dimension_magnitudes_stay_in_band(records, field, measured) -> None:
+    """量级留个宽松的锚（±0.02），防止某次改动把口径整个弄错。
+
+    容差故意宽：这些数会随开奖漂，方向由上面那条测试守。
+    """
+    report = crowding.compute_crowding(records)
+    assert getattr(report, field).index == pytest.approx(measured, abs=0.02)
+
+
+def test_repeat_one_issues_needs_chronological_order(records) -> None:
+    """「重号」是唯一依赖时间顺序的口径，所以洗牌后结果必须不变。"""
+    shuffled = list(records)
+    random.shuffle(shuffled)
+    assert crowding.repeat_one_issues(shuffled) == crowding.repeat_one_issues(records)
+
+
+def test_repeat_one_issues_on_synthetic_data() -> None:
+    """自造数据核对定义：与**上一期**红球恰好有 1 个相同。"""
+    day = dt.date(2023, 1, 3)
+    reds = [
+        (1, 2, 3, 4, 5, 6),
+        (1, 7, 8, 9, 10, 11),  # 与上期重 1 个（1）→ 命中
+        (1, 7, 12, 13, 14, 15),  # 与上期重 2 个（1、7）→ 不命中
+        (20, 21, 22, 23, 24, 25),  # 与上期重 0 个 → 不命中
+        (20, 26, 27, 28, 29, 30),  # 与上期重 1 个（20）→ 命中
+    ]
+    sample = [
+        crowding.DrawRecord(issue=2023001 + offset, date=day, reds=values, blue=1)
+        for offset, values in enumerate(reds)
+    ]
+    assert crowding.repeat_one_issues(sample) == {2023002, 2023005}

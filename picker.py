@@ -4,8 +4,9 @@
 
 - **检查更新**：抓 ``55128.cn`` 与官方 ``cwl.gov.cn``，两者逐列一致才写进
   ``data/双色球历史开奖数据_全量.xlsx``；对不上就拒绝写入并报出是第几期。
-- **开始选号**：按拥挤度分析的结论抽一注（红球偏 32/33 与大和值、避开 3 连号、
-  蓝球按实测冷热度加权），并排除与历史红球完全相同的组合。
+- **开始选号**：按形态条件抽一注（红球 3 奇 3 偶 + 3 大 3 小 + 三区比 2:2:2 +
+  恰好 1 组二连号 + 与上一期重号 1 个；蓝球仍按实测冷热度加权），
+  并排除与历史红球完全相同的组合。
 
 窗口下方的「运行日志」按时间戳记录全过程：抓取进度、交叉校验结论、写盘、耗时。
 日志与按钮状态走**两条独立队列**（``updates`` / ``pending``），原因是进度行随时可能
@@ -317,7 +318,7 @@ class PickerApp(ttk.Frame):
             records = dataset.read_records(self.data_path)
             self._progress(f"{len(records)} 期历史：重算拥挤指数并构建历史比对库…")
             strategy = selector.SelectionStrategy.from_records(records)
-            self._progress("按拥挤度加权抽样（拒绝采样，不满足条件就丢弃重抽）…")
+            self._progress("按形态条件抽样（3奇3偶 / 3大3小 / 三区2:2:2 / 1组连号 / 重号1个）…")
             selection = strategy.select()
             lines = [f"选出：{selection.label}"]
             lines.extend(f"  · {note}" for note in selection.notes)
@@ -351,9 +352,13 @@ class PickerApp(ttk.Frame):
         ).pack(side="left")
 
         self.hint_var.set(
-            f"和值 {selection.sum}　尝试 {selection.attempts} 次　"
-            f"因撞历史重抽 {selection.history_hits} 次　"
-            + ("（注意：本次未完全满足过滤条件，建议重抽）" if selection.relaxed else "已排除与历史重复的红球组合")
+            f"奇偶 {dataset.odd_even_text(selection.reds)}　"
+            f"大小 {dataset.big_small_text(selection.reds)}　"
+            f"三区 {dataset.zone_text(selection.reds)}　"
+            f"连号 {dataset.streak_text(selection.reds) or '无'}　"
+            f"重号 {selection.repeat_count} 个　"
+            f"和值 {selection.sum}　尝试 {selection.attempts} 次"
+            + ("　（注意：本次未完全满足形态条件，建议重抽）" if selection.relaxed else "")
         )
 
 
