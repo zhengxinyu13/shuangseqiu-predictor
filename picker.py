@@ -43,7 +43,8 @@ if str(PROJECT_ROOT) not in sys.path:  # 支持从任意目录直接运行
     sys.path.insert(0, str(PROJECT_ROOT))
 
 SUGGESTED_PYTHON = (
-    r"%USERPROFILE%\.workbuddy\binaries\python\envs\ssq-picker\Scripts\python.exe"
+    Path.home() / ".workbuddy" / "binaries" / "python" / "envs"
+    / "ssq-picker" / "Scripts" / "python.exe"
 )
 
 try:
