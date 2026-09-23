@@ -59,6 +59,11 @@ from shuangseqiu import dataset, selector, updater
 from shuangseqiu.data import DATA_FILE_NAME, DEFAULT_DATA_DIR
 
 TITLE = "双色球选号系统"
+# 页脚署名（ASCII，不随语言环境变化），固定在窗口最底端居中。
+FOOTER = "This software was written by Grayson Zheng."
+# 窗口尺寸也集中在这里：截图工具要复用同一份，免得两处各写一个数字慢慢跑偏。
+WIN_SIZE = (880, 840)
+WIN_MIN_SIZE = (800, 720)
 BG = "#F5F7FA"
 CARD = "#FFFFFF"
 INK = "#111827"
@@ -85,6 +90,9 @@ FONT_BALL = ("Microsoft YaHei UI", 20, "bold")
 FONT_LOG = ("Consolas", 11)
 FONT_LOG_HEAD = ("Microsoft YaHei UI", 11, "bold")
 FONT_PATH = ("Consolas", 10)
+# 页脚：与正文同档 11pt。这里刻意不缩小——署名再小也还是字，
+# 「10pt 及以下不要用」这条规矩对页脚一样适用；靠 MUTED 颜色让它退到次要层级。
+FONT_FOOTER = ("Microsoft YaHei UI", 11)
 
 
 class PickerApp(ttk.Frame):
@@ -185,6 +193,18 @@ class PickerApp(ttk.Frame):
         self.log.tag_configure("ok", foreground=OK_GREEN)
         self.log.tag_configure("warn", foreground=WARN_AMBER)
         self.log.tag_configure("err", foreground=ERR_RED)
+
+        # 页脚署名：固定在最底端、水平居中。row 5/6 都不给 weight，
+        # 富余高度仍然只归日志卡（row 4），页脚只占自己的自然高度——
+        # 否则它会把日志区的高度抢走。
+        # 间距凑成 6+2+8+24 = 40px，正好等于窗口比原来多出来的 40px，
+        # 于是日志卡的高度一点没变（仍是 401px）。
+        ttk.Separator(self, orient="horizontal").grid(
+            row=5, column=0, sticky="ew", pady=(6, 0),
+        )
+        ttk.Label(
+            self, text=FOOTER, font=FONT_FOOTER, foreground=MUTED, anchor="center",
+        ).grid(row=6, column=0, sticky="ew", pady=(8, 0))
 
     # -- 基础动作 ----------------------------------------------------------
 
@@ -377,8 +397,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = tk.Tk()
     root.title(TITLE)
-    root.geometry("880x800")
-    root.minsize(800, 680)
+    # 840 而非 800：多出来的 40px 正好让给页脚署名，
+    # 日志卡因此仍然保持原先实测的 401px（约 19 行可见），不会因为加页脚而被挤扁。
+    root.geometry(f"{WIN_SIZE[0]}x{WIN_SIZE[1]}")
+    root.minsize(*WIN_MIN_SIZE)
     root.configure(bg=BG)
     ttk.Style().theme_use("vista" if sys.platform == "win32" else "clam")
     app = PickerApp(root, args.data)
