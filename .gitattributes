@@ -13,6 +13,9 @@
 *.ini  text eol=lf
 *.html text eol=lf
 *.txt  text eol=lf
+# 无扩展名的文本文件：不写这一条会落到上面的 text=auto，
+# 在 Windows 上被 core.autocrlf 转成 CRLF，和其他文本文件不一致
+LICENSE text eol=lf
 
 # Windows 批处理脚本用 CRLF，避免 cmd.exe 解析跨行结构出问题
 *.bat  text eol=crlf
