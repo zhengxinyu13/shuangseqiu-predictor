@@ -134,11 +134,15 @@
 ## 获取代码
 
 ```bash
-git clone https://gitee.com/Grayson_Zheng/shuangseqiu-predictor.git
+git clone https://github.com/zhengxinyu13/shuangseqiu-predictor.git
 cd shuangseqiu-predictor
 ```
 
-GitHub 上有一份同名镜像仓库，内容与 Gitee 保持同步。
+国内访问不畅时可用 Gitee 镜像，内容保持同步：
+
+```bash
+git clone https://gitee.com/Grayson_Zheng/shuangseqiu-predictor.git
+```
 
 ---
 
