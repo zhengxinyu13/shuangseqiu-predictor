@@ -3,6 +3,7 @@
 
 # 源码统一 LF 换行，避免跨平台 diff 噪音
 *.py   text eol=lf
+*.spec text eol=lf
 *.md   text eol=lf
 *.json text eol=lf
 *.toml text eol=lf
