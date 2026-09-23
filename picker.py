@@ -56,7 +56,7 @@ except ImportError as error:  # pragma: no cover - 只在环境缺 tkinter 时�
     ) from error
 
 from shuangseqiu import dataset, selector, updater
-from shuangseqiu.data import DATA_FILE_NAME, DEFAULT_DATA_DIR
+from shuangseqiu.data import application_root, seed_default_data_file
 
 TITLE = "双色球选号系统"
 # 页脚署名（ASCII，不随语言环境变化），固定在窗口最底端居中。
@@ -387,14 +387,56 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--data",
         type=Path,
-        default=DEFAULT_DATA_DIR / DATA_FILE_NAME,
-        help="历史开奖数据工作簿路径",
+        default=None,
+        help="历史开奖数据工作簿路径（默认取程序目录下 data/，首次运行自动释放）",
     )
     return parser.parse_args(argv)
 
 
+def resolve_data_path(explicit: Path | None) -> Path:
+    """决定用哪个数据文件。
+
+    显式 ``--data`` 优先；否则用程序目录下的 ``data/``，
+    打包成 exe 时分发版会在这里释放一份初始数据。
+    """
+    if explicit is not None:
+        return explicit
+    return seed_default_data_file()
+
+
+def report_fatal_error(error: BaseException) -> None:
+    """把启动期异常摆到用户面前。
+
+    打包成 ``--windowed`` 的 exe 后**没有控制台**，异常直接抛出去的现象是
+    「双击了，什么都没发生」——这是最难排查的失败方式，所以必须弹窗。
+    连窗口都建不起来时（例如缺 tkinter）退回到往程序目录写日志文件。
+    """
+    import traceback
+
+    detail = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+    try:
+        messagebox.showerror(f"{TITLE} 启动失败", f"{error}\n\n{detail[-1500:]}")
+        return
+    except Exception:  # noqa: BLE001 - 弹窗本身失败时只能退到写文件
+        pass
+    try:
+        log = application_root() / "启动失败.log"
+        log.write_text(detail, encoding="utf-8")
+    except Exception:  # noqa: BLE001 - 连日志都写不了就无计可施了
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    try:
+        return _run(argv)
+    except Exception as error:  # noqa: BLE001 - 打包后没有控制台，必须自己兜住
+        report_fatal_error(error)
+        return 1
+
+
+def _run(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    data_path = resolve_data_path(args.data)
     root = tk.Tk()
     root.title(TITLE)
     # 840 而非 800：多出来的 40px 正好让给页脚署名，
@@ -403,10 +445,10 @@ def main(argv: list[str] | None = None) -> int:
     root.minsize(*WIN_MIN_SIZE)
     root.configure(bg=BG)
     ttk.Style().theme_use("vista" if sys.platform == "win32" else "clam")
-    app = PickerApp(root, args.data)
-    app._log(f"数据文件：{args.data}", "step")
-    if not args.data.is_file():
-        app._log(f"找不到数据文件：{args.data}", "err")
+    app = PickerApp(root, data_path)
+    app._log(f"数据文件：{data_path}", "step")
+    if not data_path.is_file():
+        app._log(f"找不到数据文件：{data_path}", "err")
     root.mainloop()
     return 0
 

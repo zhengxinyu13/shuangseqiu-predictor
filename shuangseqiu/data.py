@@ -14,15 +14,66 @@
 from __future__ import annotations
 
 import re
+import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
 import openpyxl
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+def application_root() -> Path:
+    """程序根目录：源码运行时是仓库根，打包成 exe 后是 exe 所在目录。
+
+    这一步对打包分发是**必需的**。PyInstaller 会把模块解包到临时目录，
+    此时 ``__file__`` 指向那个临时目录，退出即删 —— 如果数据目录还按
+    ``__file__`` 推算，「检查更新」写进去的新期号一关窗口就没了。
+    所以冻结运行时必须改用 ``sys.executable``（exe 自己的路径）来定位。
+    """
+    if getattr(sys, "frozen", False):  # PyInstaller / cx_Freeze 打包后为真
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+PROJECT_ROOT = application_root()
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
 DATA_FILE_NAME = "双色球历史开奖数据_全量.xlsx"
+
+
+def bundled_resource_dir() -> Path | None:
+    """打包时被塞进 exe 内部的只读资源目录；源码运行时返回 ``None``。
+
+    PyInstaller 解包后会把路径写在 ``sys._MEIPASS``。
+    """
+    base = getattr(sys, "_MEIPASS", None)
+    return Path(base) if base else None
+
+
+def seed_default_data_file() -> Path:
+    """返回应当使用的数据文件路径；首次运行时先从 exe 内部释放一份初始数据。
+
+    分发的 exe 里带着一份完整的历史数据作为「种子」（打包时的快照）。
+    第一次在别人电脑上运行时，把它复制到 **exe 旁边** 的 ``data/`` 里，
+    之后「检查更新」写的就是这个可写、可备份、可单独替换的副本，
+    而不是 exe 内部的只读资源。
+
+    已存在则原样返回，绝不覆盖 —— 用户自己更新过的数据不能被上线时的旧种子冲掉。
+    """
+    target = DEFAULT_DATA_DIR / DATA_FILE_NAME
+    if target.is_file():
+        return target
+
+    bundled = bundled_resource_dir()
+    if bundled is None:  # 源码运行：保持原样，交给调用方报「找不到数据文件」
+        return target
+
+    source = bundled / "data" / DATA_FILE_NAME
+    if source.is_file():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    return target
+
 
 SHEET_NAME = "开奖记录"
 HEADER: tuple[str, ...] = (
