@@ -231,27 +231,46 @@ class SelectionStrategy:
         """均匀随机抽 6 个红球（无权重，条件全部交给 :meth:`_accepts` 筛）。"""
         return tuple(sorted(rng.sample(RED_NUMBERS, RED_COUNT)))
 
-    def _accepts(self, reds: Sequence[int]) -> bool:
+    def shape_failures(self, reds: Sequence[int]) -> tuple[str, ...]:
+        """逐条检查**形态条件**，返回未满足的条件代号（空元组 = 全部满足）。
+
+        只看号码本身与上一期，**不看历史库**——「与历史重复」是另一回事，
+        由 :meth:`accepts` 负责，校验号码时要分开报，所以这里也分开算。
+
+        代号与 :class:`~shuangseqiu.checker` 的展示名一一对应：
+        ``odd_even`` / ``big_small`` / ``zone`` / ``run`` / ``repeat``；
+        结构上就不合法（个数不对、越界、重复）时返回 ``("shape",)``。
+
+        Args:
+            reds: 红球序列（不要求有序）。
+
+        Returns:
+            未满足的条件代号元组，全部满足时为空元组。
+        """
         config = self.config
         if len(reds) != RED_COUNT or len(set(reds)) != RED_COUNT:
-            return False
+            return ("shape",)
         if not all(number in RED_NUMBERS for number in reds):
-            return False
+            return ("shape",)
+
+        failures: list[str] = []
         if odd_count(reds) != config.odd_count:
-            return False
+            failures.append("odd_even")
         if big_count(reds) != config.big_count:
-            return False
+            failures.append("big_small")
         if zone_counts(reds) != config.zone_ratio:
-            return False
+            failures.append("zone")
         runs = run_lengths(reds)
-        if len(runs) != config.consecutive_groups:
-            return False
-        if runs and max(runs) > config.max_run:
-            return False
+        if len(runs) != config.consecutive_groups or (runs and max(runs) > config.max_run):
+            failures.append("run")
         if config.repeat_count is not None:
             if len(set(reds) & self.last_reds) != config.repeat_count:
-                return False
-        return frozenset(reds) not in self.history
+                failures.append("repeat")
+        return tuple(failures)
+
+    def accepts(self, reds: Sequence[int]) -> bool:
+        """号码是否同时满足全部形态条件、且不与历史红球组合重复。"""
+        return not self.shape_failures(reds) and frozenset(reds) not in self.history
 
     def select(self, rng: random.Random | None = None) -> Selection:
         """抽一组号码。
@@ -272,7 +291,7 @@ class SelectionStrategy:
             if frozenset(candidate) in self.history:
                 history_hits += 1
                 continue
-            if self._accepts(candidate):
+            if self.accepts(candidate):
                 return self._build(candidate, blue, attempts, history_hits, relaxed=False)
 
         # 兜底：真跑满上限就降级返回，并在文案里说清楚，绝不静默

@@ -170,7 +170,7 @@ def test_candidate_space_matches_a_full_enumeration(strategy, records) -> None:
     """穷尽枚举候选空间，并把三件事对齐。
 
     1. 枚举出的候选数 == 独立写的 :func:`_satisfies` 判定的通过数；
-    2. 再排除历史撞号后，== ``_accepts`` 的通过数；
+    2. 再排除历史撞号后，== ``accepts`` 的通过数；
     3. 量级落在 4 000~5 000（规则被改动时会立刻露馅）。
     """
     history = {frozenset(record.reds) for record in records}
@@ -179,7 +179,7 @@ def test_candidate_space_matches_a_full_enumeration(strategy, records) -> None:
 
     shape_ok = [reds for reds in STRUCTURED_SPACE if _satisfies(reds, config, last)]
     not_historical = [reds for reds in shape_ok if frozenset(reds) not in history]
-    accepts = [reds for reds in STRUCTURED_SPACE if strategy._accepts(reds)]
+    accepts = [reds for reds in STRUCTURED_SPACE if strategy.accepts(reds)]
 
     assert len(accepts) == len(not_historical)
     assert 4000 <= len(accepts) <= 5000, f"候选空间大小异常：{len(accepts)}"
@@ -202,7 +202,7 @@ def test_sampling_rate_agrees_with_the_enumerated_space(strategy, records) -> No
 
     rng = random.Random(SEED + 5)
     trials = 60000
-    hits = sum(1 for _ in range(trials) if strategy._accepts(tuple(sorted(rng.sample(range(1, 34), 6)))))
+    hits = sum(1 for _ in range(trials) if strategy.accepts(tuple(sorted(rng.sample(range(1, 34), 6)))))
     measured_rate = hits / trials
 
     assert measured_rate == pytest.approx(enumerated_rate, rel=0.2), (
@@ -215,7 +215,7 @@ def test_sampling_rate_agrees_with_the_enumerated_space(strategy, records) -> No
 # --------------------------------------------------------------------------
 
 def test_history_exclusion_rejects_an_exact_match(strategy, records) -> None:
-    """把一条落在候选空间里的历史组合塞进历史库，``_accepts`` 必须拒绝它。"""
+    """把一条落在候选空间里的历史组合塞进历史库，``accepts`` 必须拒绝它。"""
     history = {frozenset(record.reds) for record in records}
     target = next(
         reds
@@ -226,12 +226,12 @@ def test_history_exclusion_rejects_an_exact_match(strategy, records) -> None:
     free = selector.SelectionStrategy(
         strategy.report, history=[], last_reds=strategy.last_reds
     )
-    assert free._accepts(target) is True
+    assert free.accepts(target) is True
 
     blocked = selector.SelectionStrategy(
         strategy.report, history=[target], last_reds=strategy.last_reds
     )
-    assert blocked._accepts(target) is False
+    assert blocked.accepts(target) is False
 
 
 def test_history_exclusion_now_actually_fires(strategy, records) -> None:
@@ -259,7 +259,7 @@ def test_history_is_keyed_on_red_balls_only(tiny_report) -> None:
         tiny_report, history=[target], last_reds=UNIT_LAST
     )
     assert strategy.history == frozenset({frozenset(target)})
-    assert strategy._accepts(target) is False
+    assert strategy.accepts(target) is False
 
 
 # --------------------------------------------------------------------------
@@ -285,7 +285,7 @@ def test_accepts_rejects_each_violation(tiny_report, reds, reason) -> None:
     strategy = selector.SelectionStrategy(
         tiny_report, history=[], last_reds=UNIT_LAST
     )
-    assert strategy._accepts(reds) is False, f"应当拒绝：{reason}"
+    assert strategy.accepts(reds) is False, f"应当拒绝：{reason}"
 
 
 def test_accepts_accepts_a_conforming_ticket(tiny_report) -> None:
@@ -296,7 +296,7 @@ def test_accepts_accepts_a_conforming_ticket(tiny_report) -> None:
         tiny_report, history=[], last_reds=UNIT_LAST
     )
     assert _satisfies(conforming, strategy.config, UNIT_LAST)
-    assert strategy._accepts(conforming) is True
+    assert strategy.accepts(conforming) is True
 
 
 # --------------------------------------------------------------------------

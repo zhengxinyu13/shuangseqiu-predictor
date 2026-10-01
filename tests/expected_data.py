@@ -42,18 +42,18 @@
 
 from __future__ import annotations
 
-# 2026-09-23 刷新：入库 2026110 期（02 05 16 19 26 32 +14，2026-09-22 开出）
-PERIODS = 3507
-LATEST_ISSUE = 2026110
+# 2026-10-01 刷新：入库 2026113 期（03 04 20 24 29 30 +11，2026-09-29 开出）
+PERIODS = 3510
+LATEST_ISSUE = 2026113
 FIRST_ISSUE = 2003001
 YEARS: tuple[int, ...] = tuple(range(2003, 2027))
 
 # 最新一期的号码与奖金栏。钉住它是因为「读取时有没有把奖金列并进来」只能
 # 通过最新一期验出来——历史行早已被反复核过，新写入的行才是风险点。
-LATEST_REDS = (2, 5, 16, 19, 26, 32)
-LATEST_BLUE = 14
+LATEST_REDS = (3, 4, 20, 24, 29, 30)
+LATEST_BLUE = 11
 # (销售额, 奖池, 一等奖注数, 一等奖单注奖金, 二等奖注数, 二等奖单注奖金)
-LATEST_BONUS = (327624764, 930967826, 12, 6654980, 173, 143495)
+LATEST_BONUS = (338536676, 973407364, 10, 6845689, 165, 139824)
 
 # 各年份期数的实测基线（2003–2004 年每周 2 期，2005 年起每周 3 期，2020 年因疫情减期）。
 # 数据被替换、漏采或截断时，这条基线会立刻报警。
@@ -81,7 +81,7 @@ YEAR_COUNTS = {
     2023: 151,
     2024: 151,
     2025: 151,
-    2026: 110,
+    2026: 113,
 }
 
 # 拥挤指数的可用期数：2003 年整整 89 期销售额为 0，既不进分子也不进分母。
@@ -91,10 +91,10 @@ PERIODS_WITHOUT_SALES = 89
 USABLE_PERIODS = PERIODS - PERIODS_WITHOUT_SALES
 
 # 基线自检：实际一等奖注数应当非常接近理论注数，说明「实际 ÷ 理论」的公式自洽。
-BASELINE_ACTUAL_WINNERS = 28237
-BASELINE_EXPECTED_WINNERS = 28526
+BASELINE_ACTUAL_WINNERS = 28255
+BASELINE_EXPECTED_WINNERS = 28555
 
 # 红球组合去重：期数 − 组数 = 完全重复的对数。
 # 生日问题的期望是 n(n-1)/(2N)（N = C(33,6) = 1 107 568），实测始终落在随机涨落内。
-DISTINCT_RED_GROUPS = 3501
+DISTINCT_RED_GROUPS = 3504
 DUPLICATE_RED_PAIRS = PERIODS - DISTINCT_RED_GROUPS

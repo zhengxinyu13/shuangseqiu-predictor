@@ -1,12 +1,15 @@
 """双色球选号系统 —— 桌面界面（Tkinter）。
 
-两个按钮：
+三个按钮 + 一个输入框：
 
 - **检查更新**：抓 ``55128.cn`` 与官方 ``cwl.gov.cn``，两者逐列一致才写进
   ``data/双色球历史开奖数据_全量.xlsx``；对不上就拒绝写入并报出是第几期。
 - **开始选号**：按形态条件抽一注（红球 3 奇 3 偶 + 3 大 3 小 + 三区比 2:2:2 +
   恰好 1 组二连号 + 与上一期重号 1 个；蓝球仍按实测冷热度加权），
   并排除与历史红球完全相同的组合。
+- **校验号码**：把自己写的一注敲进输入框（``06 11 13 14 20 28 + 16``），
+  检查它是否与历史中奖号码重复、形态是否合理，并给出最小改动建议。
+  判定标准与「开始选号」**共用同一份**（见 :mod:`shuangseqiu.checker`）。
 
 窗口下方的「运行日志」按时间戳记录全过程：抓取进度、交叉校验结论、写盘、耗时。
 日志与按钮状态走**两条独立队列**（``updates`` / ``pending``），原因是进度行随时可能
@@ -56,7 +59,7 @@ except ImportError as error:  # pragma: no cover - 只在环境缺 tkinter 时�
         f"请改用这个解释器运行：\n    {SUGGESTED_PYTHON} picker.py"
     ) from error
 
-from shuangseqiu import dataset, selector, updater
+from shuangseqiu import checker, dataset, selector, updater
 from shuangseqiu.data import application_root, seed_default_data_file
 
 TITLE = "双色球选号系统"
@@ -106,6 +109,9 @@ class PickerApp(ttk.Frame):
         self.updates: queue.Queue[tuple[str, str]] = queue.Queue()
         self.busy = False
         self.last_selection: selector.Selection | None = None
+        # 「复制号码」复制的**最近一次展示**的那一注——可能是选号结果，也可能是
+        # 刚校验过的自选号码，所以单独存一份展示串，别去猜 last_selection 是谁。
+        self.last_label: str | None = None
 
         self._build_widgets()
         self._refresh_status()
@@ -146,17 +152,40 @@ class PickerApp(ttk.Frame):
             font=FONT_PATH, anchor="w", padx=12,
         ).grid(row=1, column=0, sticky="ew", pady=(0, 9))
 
-        # 按钮排
+        # 按钮排：第一行是三个动作按钮 + 进度条，第二行是「校验自选号码」输入。
+        # 两行都放在同一个 frame 里，这样不用改动其他控件的 grid 行号
+        # （页脚仍然稳稳落在 row 6，界面契约测试按行号定位）。
         buttons = ttk.Frame(self)
         buttons.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        # 弹性宽度给第 3 列这个**空列**，而不是给某一颗按钮所在的列：
+        # 三个按钮因此仍然紧挨着靠左（和原来 pack(side="left") 的观感一致），
+        # 富余宽度全部落到第 3 列，把进度条 / 校验按钮顶到右边。
+        buttons.columnconfigure(3, weight=1)
         self.update_button = ttk.Button(buttons, text="检查更新", command=self.on_check_update)
-        self.update_button.pack(side="left", ipadx=14, ipady=5)
+        self.update_button.grid(row=0, column=0, ipadx=14, ipady=5)
         self.select_button = ttk.Button(buttons, text="开始选号", command=self.on_select)
-        self.select_button.pack(side="left", padx=(10, 0), ipadx=14, ipady=5)
+        self.select_button.grid(row=0, column=1, padx=(10, 0), ipadx=14, ipady=5)
         self.copy_button = ttk.Button(buttons, text="复制号码", command=self.on_copy, state="disabled")
-        self.copy_button.pack(side="left", padx=(10, 0), ipadx=8, ipady=5)
+        self.copy_button.grid(row=0, column=2, padx=(10, 0), ipadx=8, ipady=5)
         self.progress = ttk.Progressbar(buttons, mode="indeterminate", length=150)
-        self.progress.pack(side="right")
+        self.progress.grid(row=0, column=4, sticky="e")
+        # 空闲时把进度条整个收起来（grid_remove 保留列宽与位置，随时能再 grid 回来）。
+        # 否则 ttk 的**不确定态**进度条在 stop() 之后会把最后一次动画的位置留在那儿，
+        # 于是不干活的时候也挂着一截绿色，看着像还没跑完。
+        self.progress.grid_remove()
+
+        ttk.Label(
+            buttons, text="校验自选号码", font=FONT_UI, foreground=INK,
+        ).grid(row=1, column=0, sticky="w", pady=(10, 0))
+        self.ticket_var = tk.StringVar()
+        self.ticket_entry = ttk.Entry(buttons, textvariable=self.ticket_var, font=FONT_UI)
+        self.ticket_entry.grid(
+            row=1, column=1, columnspan=3, sticky="ew", padx=(10, 10), pady=(10, 0),
+        )
+        # 回车即校验：敲完号码直接按回车是最顺手的操作，不该逼着去够按钮。
+        self.ticket_entry.bind("<Return>", lambda _event: self.on_check_ticket())
+        self.check_button = ttk.Button(buttons, text="校验号码", command=self.on_check_ticket)
+        self.check_button.grid(row=1, column=4, sticky="e", pady=(10, 0), ipadx=10, ipady=4)
 
         # 号码展示
         result_card = tk.Frame(self, bg=CARD, highlightthickness=1, highlightbackground="#E3E8EF")
@@ -232,10 +261,16 @@ class PickerApp(ttk.Frame):
         state = "disabled" if busy else "normal"
         self.update_button.configure(state=state)
         self.select_button.configure(state=state)
+        # 校验按钮与输入框一并锁上：忙的时候再点只会被 _run_async 直接丢掉，
+        # 不如让按钮变灰，用户的直觉比「点了没反应」更清楚。
+        self.check_button.configure(state=state)
+        self.ticket_entry.configure(state=state)
         if busy:
+            self.progress.grid()
             self.progress.start(12)
         else:
             self.progress.stop()
+            self.progress.grid_remove()
 
     def _refresh_status(self) -> None:
         try:
@@ -310,6 +345,8 @@ class PickerApp(ttk.Frame):
         self._refresh_status()
         if isinstance(extra, selector.Selection):
             self._render_selection(extra)
+        elif isinstance(extra, checker.TicketCheck):
+            self._render_check(extra)
 
     # -- 检查更新 ----------------------------------------------------------
 
@@ -347,31 +384,62 @@ class PickerApp(ttk.Frame):
 
         self._run_async(work, "开始选号")
 
+    # -- 校验自选号码 ------------------------------------------------------
+
+    def on_check_ticket(self) -> None:
+        """校验输入框里那一注：格式、是否与历史重复、形态是否合理。"""
+        text = self.ticket_var.get().strip()
+        if not text:
+            self._log("请先在上面输入一注号码，例如「06 11 13 14 20 28 + 16」。", "warn")
+            self.ticket_entry.focus_set()
+            return
+
+        def work() -> tuple[str, str, object]:
+            self._progress("读取历史工作簿…")
+            records = dataset.read_records(self.data_path)
+            self._progress(f"{len(records)} 期历史：重算拥挤指数并构建校验基准…")
+            builder = checker.TicketChecker.from_records(records)
+            try:
+                result = builder.check(text)
+            except checker.TicketFormatError as error:
+                # 输入不合规属于**用户输入问题**，不是程序出错：
+                # 用 warn 而不是 err，并把具体哪里不对原样告诉他。
+                return ("warn", f"输入无法解析成合法的一注：{error}", None)
+            self._progress("逐条判定形态条件、比对历史库、生成统计画像…")
+            return ("ok", "\n".join(checker.render_report(result)), result)
+
+        self._run_async(work, "校验号码", f"输入：{text}")
+
     def on_copy(self) -> None:
-        if self.last_selection is None:
+        if self.last_label is None:
             return
         self.clipboard_clear()
-        self.clipboard_append(self.last_selection.label)
-        self._log(f"已复制到剪贴板：{self.last_selection.label}", "step")
+        self.clipboard_append(self.last_label)
+        self._log(f"已复制到剪贴板：{self.last_label}", "step")
 
-    def _render_selection(self, selection: selector.Selection) -> None:
-        self.last_selection = selection
-        self.copy_button.configure(state="normal")
+    # -- 号码展示 ----------------------------------------------------------
 
+    def _render_balls(self, reds: tuple[int, ...], blue: int) -> None:
+        """把 6 个红球 + 1 个蓝球画进号码卡片（选号与校验共用）。"""
         for child in self.balls_frame.winfo_children():
             child.destroy()
-
-        for number in selection.reds:
+        for number in reds:
             tk.Label(
                 self.balls_frame, text=f"{number:02d}", bg=RED_BALL, fg="white",
                 font=FONT_BALL, width=3, pady=6,
             ).pack(side="left", padx=(0, 7))
         tk.Label(self.balls_frame, text="+", bg=CARD, fg=MUTED, font=FONT_BALL).pack(side="left", padx=(2, 9))
         tk.Label(
-            self.balls_frame, text=f"{selection.blue:02d}", bg=BLUE_BALL, fg="white",
+            self.balls_frame, text=f"{blue:02d}", bg=BLUE_BALL, fg="white",
             font=FONT_BALL, width=3, pady=6,
         ).pack(side="left")
 
+    def _render_selection(self, selection: selector.Selection) -> None:
+        self.last_selection = selection
+        self.last_label = selection.label
+        self.copy_button.configure(state="normal")
+
+        self._render_balls(selection.reds, selection.blue)
         self.hint_var.set(
             f"奇偶 {dataset.odd_even_text(selection.reds)}　"
             f"大小 {dataset.big_small_text(selection.reds)}　"
@@ -380,6 +448,28 @@ class PickerApp(ttk.Frame):
             f"重号 {selection.repeat_count} 个　"
             f"和值 {selection.sum}　尝试 {selection.attempts} 次"
             + ("　（注意：本次未完全满足形态条件，建议重抽）" if selection.relaxed else "")
+        )
+
+    def _render_check(self, result: checker.TicketCheck) -> None:
+        self.last_selection = None
+        self.last_label = result.label
+        self.copy_button.configure(state="normal")
+
+        self._render_balls(result.reds, result.blue)
+        conditions = result.conditions
+        if result.balanced:
+            shape = f"形态 {len(conditions)}/{len(conditions)} 条全部满足"
+        else:
+            shape = f"形态 {len(conditions) - len(result.failed_conditions)}/{len(conditions)} 条满足"
+        if result.duplicates_exactly:
+            duplicate = "红球 + 蓝球与历史某一期完全相同"
+        elif result.red_matches:
+            duplicate = "红球 6 个与历史某一期完全相同"
+        else:
+            duplicate = "与历史中奖号码不重复"
+        self.hint_var.set(
+            f"{shape}　{duplicate}　和值 {result.total}　跨度 {result.span}"
+            f"（详细判定见下方日志）"
         )
 
 

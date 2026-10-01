@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from math import comb
+from math import comb, sqrt
 
 from .dataset import (
     BLUE_NUMBERS,
@@ -92,6 +92,40 @@ class CrowdingReport:
         """按拥挤指数从低到高返回最冷的若干个蓝球（最冷在前）。"""
         ordered = sorted(self.blue.items(), key=lambda item: item[1].index)
         return [number for number, _ in ordered[:count]]
+
+
+def direction(index: CrowdingIndex, z: float = 1.96) -> str:
+    """按 Poisson 近似判断拥挤指数是否**显著**偏离 1。
+
+    判方向而不钉数值：覆盖期数少的形态（三区 2:2:2 只有 528 期）每入库一期
+    都会漂，但方向在 95% 置信度上是稳定的——那才是有价值的结论。
+
+    Args:
+        index: 某形态的拥挤指数。
+        z: 置信系数，默认 1.96 对应 95% 置信水平。
+
+    Returns:
+        ``"hot"``（显著偏热）、``"cold"``（显著偏冷）、``"flat"``（无显著差异）。
+        指数无效（没有可用期数）时也返回 ``"flat"``。
+    """
+    if not index.expected_winners:
+        return "flat"
+    standard_error = sqrt(index.actual_winners) / index.expected_winners
+    low = index.index - z * standard_error
+    high = index.index + z * standard_error
+    if high < 1.0:
+        return "cold"
+    if low > 1.0:
+        return "hot"
+    return "flat"
+
+
+def direction_text(index: CrowdingIndex) -> str:
+    """把 :func:`direction` 翻成给用户看的一句话结论。"""
+    return {
+        "hot": "显著偏热（大众更爱买这种形态）",
+        "cold": "显著偏冷（大众买得少）",
+    }.get(direction(index), "与全表基线无显著差异")
 
 
 def _index_of(records: Iterable[DrawRecord], predicate: Callable[[DrawRecord], bool]) -> CrowdingIndex:

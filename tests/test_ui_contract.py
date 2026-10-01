@@ -32,8 +32,9 @@ ALLOWED_THIRD_PARTY = {"openpyxl", "httpx"}
 FIRST_PARTY = {"shuangseqiu"}
 
 # 界面的业务模块白名单。stats/charts/report 分别会拉起 scipy 与 matplotlib，
-# 必须留在报告侧，不能被界面间接引入。
-ALLOWED_BUSINESS_MODULES = {"data", "dataset", "selector", "updater"}
+# 必须留在报告侧，不能被界面间接引入。checker 只是把 selector + crowding +
+# dataset 组合起来做校验，依赖链里没有科学计算栈，界面可以安全使用。
+ALLOWED_BUSINESS_MODULES = {"checker", "data", "dataset", "selector", "updater"}
 
 # 署名是 Grayson 指定的文案，属于「不改的史实」——写死并配哨兵。
 EXPECTED_FOOTER = "This software was written by Grayson Zheng."
